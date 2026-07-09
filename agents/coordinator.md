@@ -63,21 +63,22 @@ Pause and ask the human — don't just push forward — at these points:
   than "try again".
 - **Traceability**: keep decisions and handoffs brief and explicit.
 
-## The programmatic harness (`ai/`)
+## Delegation, whatever your tool supports
 
-For runs that need **real parallelism, mixed-vendor models**, or a scriptable
-pipeline, delegate to the async harness instead of the interactive sub-agents:
+The roles below are defined once and work with any coding agent. How you hand
+work to them differs:
 
-```bash
-python -m ai.run "<goal>"                             # uses ai/config.yaml
-AI_FORCE_MODEL=mock:mock python -m ai.run "<goal>"    # dry run, no keys / no network
-python -m ai.run --interactive "<goal>"               # plan + result + final checkpoints
-```
+- If your tool has **native sub-agents**, delegate to them by name. Each starts
+  in a clean context window and returns only its summary.
+- If it does **not**, adopt the role yourself for that subtask: re-read the role
+  prompt, do only that job under those constraints, and write the distilled
+  summary before moving on. The isolation is then a discipline rather than a
+  mechanism, but the loop is the same.
 
-Same shape (planner → worker → **evaluator**) but with role→model mapping in
-`ai/config.yaml`, dependency waves, sub-agent context isolation, and human
-checkpoints. It can call vendor APIs (billed per token) or the vendor agent CLIs
-(drawing on your subscription). Details: `ai/README.md`.
+Either way the loop per subtask is:
+`researcher` (if needed) → `implementer` → `evaluator`. On FAIL, return the
+feedback to `implementer`; after 2 revisions, stop and escalate to the human.
 
-**Which to use:** interactive sub-agents for work in the repo; the `ai/` harness
-for parallel/multi-step or mixed-vendor runs.
+Nothing here assumes a particular model or vendor. If a role needs a stronger or
+cheaper model than the default, say so in the handoff — your tool decides how to
+honor it.

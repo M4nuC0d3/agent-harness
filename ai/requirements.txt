@@ -1,8 +1,0 @@
-# --- Core ---
-pyyaml>=6.0
-python-dotenv>=1.0        # optional: auto-loads .env
-
-# --- Providers (install only what you use) ---
-anthropic>=0.40          # Claude
-openai>=1.50             # OpenAI + any OpenAI-compatible local server
-google-genai>=0.3        # optional: Gemini
