@@ -93,10 +93,41 @@ Three levels, coarse to fine:
    `max_tokens`. Vendors may be mixed (e.g. planner = Claude Opus, worker = a
    local Llama, evaluator = Gemini).
 3. **A custom provider at runtime** — `register_provider("name", MyProvider())`
-   in `ai/models.py` (Azure, Bedrock, a router, …).
+   from `ai/providers/` (Azure, Bedrock, a router, …).
 
-Implemented providers: `anthropic`, `openai`, `local` (any OpenAI-compatible
-endpoint: Ollama / vLLM / LM Studio), `google`, `mock`.
+Implemented providers, grouped by **billing path**:
+
+| Path | Providers | Billed |
+|---|---|---|
+| API key | `anthropic`, `openai`, `local` (Ollama / vLLM / LM Studio), `google` | per token |
+| Subscription | `claude_cli`, `codex_cli`, `gemini_cli` | against your plan |
+| Offline | `mock` | free |
+
+### The subscription path
+
+`claude_cli` / `codex_cli` / `gemini_cli` shell out to the vendor's agent CLI
+(`claude -p`, `codex exec`, `gemini -p`). Those CLIs authenticate with your
+account login, so their usage draws on your subscription instead of an API key.
+Set it per role — you can even run the planner on your plan and the workers on an
+API vendor in the same run.
+
+```yaml
+planner:   { provider: claude_cli, model: sonnet }   # on your Claude plan
+worker:    { provider: openai,     model: gpt-4.1-mini }  # billed per token
+```
+
+Know the trade-offs before relying on it:
+
+- These are **agentic tools, not completion endpoints**. They carry their own
+  system prompt and tool access; our `temperature` and `max_tokens` are ignored,
+  and the system prompt is prepended to the user message.
+- **Token counts are estimates**, not billing data (`raw.estimated == True`).
+- **One process per model call.** Drop `loop.max_concurrency` to 1–2 — plan
+  limits are sized for one human, not four parallel workers.
+- Vendors recommend **API keys for programmatic/CI use**, and the subscription
+  treatment of headless CLI usage has been subject to change. Verify flags with
+  `<binary> --help`; override them via `AI_CLAUDE_ARGS` etc. without touching code.
+- `gemini_cli` only uses your Google account if `GEMINI_API_KEY` is **unset**.
 
 ## Human-in-the-loop checkpoints
 
@@ -143,7 +174,7 @@ more subtasks doesn't linearly inflate every downstream context window.
 | `agents/worker.py` | runs one subtask in isolation, returns result + summary |
 | `agents/evaluator.py` | scores a result (pass/fail + score + feedback) |
 | `agents/base.py` | model call with timeout, retries + backoff, token accounting |
-| `models.py` | provider registry + vendor adapters |
+| `providers/` | one module per vendor behind one interface (`base.py`, `anthropic.py`, `openai.py`, `google.py`, `cli.py`, `mock.py`) |
 | `config.py` / `config.yaml` | role→model mapping, budgets, context, HITL |
 | `observability.py` | logger + JSONL trace (`runs/<id>.jsonl`) |
 | `schemas.py` | data structures (Task, Budget, RunState, ContextPolicy, …) |
@@ -158,7 +189,7 @@ more subtasks doesn't linearly inflate every downstream context window.
 - ✅ Evaluator / critic with a revision loop
 - ✅ Async execution with bounded parallelism (`asyncio` + semaphore)
 - ✅ Dependency **waves** (`depends_on` → topological grouping)
-- ✅ Multi-provider model routing per role (`config.yaml`, `models.py`)
+- ✅ Multi-provider model routing per role, incl. API vs subscription path (`config.yaml`, `providers/`)
 
 **Control & humans**
 - ✅ Budgets/limits: tokens, wall-clock, iterations, revision rounds → **guaranteed termination**
