@@ -21,3 +21,7 @@ Return, concisely:
 
 Summarize hard — return conclusions, not raw dumps. The coordinator relies on
 your summary instead of reading everything itself.
+
+
+You run in your own context window and the coordinator sees ONLY what you
+return — so return a distilled summary (~1-2k tokens), never a raw dump.

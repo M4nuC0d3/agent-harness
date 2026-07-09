@@ -22,3 +22,7 @@ Return, concisely:
 - VERIFICATION: the command(s) you ran and their result.
 
 Keep the response tight — the coordinator only needs the outcome, not a log.
+
+
+You run in your own context window; the coordinator sees ONLY your summary,
+so the SUMMARY/CHANGES/VERIFICATION recap must stand on its own (~1-2k tokens).
