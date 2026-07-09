@@ -1,121 +1,200 @@
 # `ai/` — Async Multi-Agent Harness
 
-Ein kleines, provider-agnostisches Harness: ein **Planner/Coordinator** zerlegt
-ein Ziel in Subtasks, **Worker**-Sub-Agenten arbeiten sie **parallel** ab, ein
-**Evaluator** (Kritiker) prüft jedes Ergebnis und schickt es bei Bedarf zur
-Überarbeitung zurück. Jeder Agent kann auf einem **anderen Modell / anderen
-Anbieter** laufen — gesteuert über `config.yaml`, nicht über Code.
+A small, provider-agnostic harness built on two of Anthropic's agent patterns.
+A **planner/coordinator** splits a goal into subtasks; **worker** sub-agents run
+them **in parallel** (grouped into dependency *waves*); an **evaluator** (critic)
+scores every result and sends weak ones back for revision. Each worker runs in an
+**isolated context** and returns a **distilled summary**, and a human can be put
+**in the loop** at three checkpoints. Every agent can run on a **different model /
+vendor**, steered from `config.yaml` — not code.
 
 ```
-Ziel
- └─▶ Planner ──▶ [Subtask 1, Subtask 2, …]         (welches Modell? -> models.planner)
-                    │
-        ┌───────────┼───────────┐  (parallel, begrenzt durch max_concurrency)
-        ▼           ▼           ▼
-     Worker      Worker      Worker                 (-> models.worker)
-        │           │           │
-        ▼           ▼           ▼
-    Evaluator   Evaluator   Evaluator               (-> models.evaluator)
-        │           │           │
-     pass/▲fail  pass/▲fail  pass/▲fail   ── fail -> zurück an Worker (max N Runden)
-        └───────────┴───────────┘
-                    ▼
-                 Synthese ──▶ Endergebnis + runs/<id>.result.json + runs/<id>.jsonl (Trace)
+Goal
+ └─▶ Planner ──▶ [t1, t2, t3(dep t1,t2)]            (which model? -> models.planner)
+        │  (+ optional HUMAN checkpoint on the plan)
+        ▼
+   Wave 1: t1 ‖ t2        Wave 2: t3                (waves from depends_on)
+        │      │              │
+        ▼      ▼              ▼
+     Worker Worker         Worker                    (-> models.worker; scoped context in)
+        │      │              │                       (distilled summary out)
+        ▼      ▼              ▼
+    Evaluator …           Evaluator                  (-> models.evaluator)
+        │                    │
+   pass/▲fail  ── fail ──▶ back to Worker (max N rounds)
+        │  (+ optional HUMAN checkpoint on each result)
+        └──────────┬─────────┘
+                   ▼
+                Synthesis  (+ optional HUMAN checkpoint on the final answer)
+                   ▼
+   final answer + runs/<id>.result.json + runs/<id>.jsonl (trace)
 ```
 
-## Schnellstart
+## How this maps to Anthropic's guidance
+
+This harness deliberately follows Anthropic's published recommendations rather
+than a heavyweight framework:
+
+- **Orchestrator-workers** and **evaluator-optimizer** patterns from
+  [*Building effective agents*](https://www.anthropic.com/engineering/building-effective-agents).
+  The planner is the orchestrator; workers are the workers; the evaluator +
+  revision loop is the optimizer.
+- **The three principles** from the same post:
+  1. *Simplicity* — plain `asyncio` and direct provider calls; no framework
+     abstraction to hide the prompts.
+  2. *Transparency* — the plan, the waves, and every accept/revise decision are
+     printed as they happen, and mirrored into a JSONL trace.
+  3. *Good ACI* (agent-computer interface) — each sub-agent has one focused
+     system prompt and a narrow job; tools are the documented next extension.
+- **Stopping conditions & human checkpoints** — Anthropic recommends letting an
+  agent "pause for human feedback at checkpoints" and keeping hard stopping
+  conditions. Both are first-class here (see HITL and Budget below).
+- **Sub-agent context isolation** from
+  [*Effective context engineering for AI agents*](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents):
+  a sub-agent works in a clean context window and returns a condensed summary,
+  so the coordinator accumulates conclusions, not raw transcripts.
+
+## Quickstart
 
 ```bash
 pip install -r ai/requirements.txt
-cp ai/.env.example ai/.env      # Keys eintragen (nur die, die du nutzt)
+cp ai/.env.example ai/.env      # add only the keys you actually use
 
-# Trockenlauf ohne Keys / ohne Netz (Mock-Provider):
-AI_FORCE_MODEL=mock:mock python -m ai.run "Baue einen CSV-zu-JSON-Konverter mit Tests"
+# Dry run — no keys, no network (mock provider):
+AI_FORCE_MODEL=mock:mock python -m ai.run "Build a CSV-to-JSON converter with tests"
 
-# Echter Lauf (nutzt config.yaml):
-python -m ai.run "Baue einen CSV-zu-JSON-Konverter mit Tests"
+# Real run (uses config.yaml):
+python -m ai.run "Build a CSV-to-JSON converter with tests"
 
-# Mit Freigabe des Plans durch einen Menschen:
-python -m ai.run --approve "Refactore Modul X"
+# With human checkpoints:
+python -m ai.run --approve "Refactor module X"          # gate the plan only
+python -m ai.run --interactive "Refactor module X"      # gate plan + results + final
+python -m ai.run --interactive --results always "…"     # review every result
 ```
 
-Programmatischer Aufruf:
+Programmatic use:
 
 ```python
 import asyncio
 from ai import run_goal
-state = asyncio.run(run_goal("Fasse die offenen Issues zusammen"))
+state = asyncio.run(run_goal("Summarize the open issues"))
 print(state.final_output)
 ```
 
-## Modelle steuern (der wichtigste Punkt)
+## Steering the models (the core knob)
 
-Drei Ebenen, von grob nach fein:
+Three levels, coarse to fine:
 
-1. **Global per Env** — überschreibt alle Agenten auf einmal:
-   `AI_FORCE_MODEL="anthropic:claude-haiku-4-5-20251001"` (billig überall) oder
-   `AI_FORCE_MODEL="mock:mock"` (Trockenlauf).
-2. **Pro Rolle in `config.yaml`** — der Normalfall. Jede Rolle (`planner`,
-   `worker`, `evaluator`, plus eigene) bekommt Provider + Modell + Temperatur +
-   `max_tokens`. Anbieter dürfen gemischt werden (z. B. Planner = Claude Opus,
-   Worker = lokales Llama, Evaluator = Gemini).
-3. **Eigener Provider zur Laufzeit** — `register_provider("name", MyProvider())`
-   in `ai/models.py` andocken (Azure, Bedrock, ein Router, …).
+1. **Global, via env** — override every agent at once:
+   `AI_FORCE_MODEL="anthropic:claude-haiku-4-5-20251001"` (cheap everywhere) or
+   `AI_FORCE_MODEL="mock:mock"` (dry run).
+2. **Per role, in `config.yaml`** — the normal case. Each role (`planner`,
+   `worker`, `evaluator`, plus any you add) gets provider + model + temperature +
+   `max_tokens`. Vendors may be mixed (e.g. planner = Claude Opus, worker = a
+   local Llama, evaluator = Gemini).
+3. **A custom provider at runtime** — `register_provider("name", MyProvider())`
+   in `ai/models.py` (Azure, Bedrock, a router, …).
 
-Implementierte Provider: `anthropic`, `openai`, `local` (jeder
-OpenAI-kompatible Endpoint: Ollama / vLLM / LM Studio), `google`, `mock`.
+Implemented providers: `anthropic`, `openai`, `local` (any OpenAI-compatible
+endpoint: Ollama / vLLM / LM Studio), `google`, `mock`.
 
-## Aufbau
+## Human-in-the-loop checkpoints
 
-| Datei | Zweck |
+Configured under `hitl:` in `config.yaml`, overridable by CLI flags. `mode: auto`
+runs unattended; `mode: interactive` asks on the terminal. Three gates:
+
+| Gate | When | Human can |
+|---|---|---|
+| `plan` | after planning, before any work | **approve** / **edit** the subtasks / **revise** (re-plan with feedback) / **abort** |
+| `results` | after the evaluator scores a subtask (`off` / `on_fail` / `always`) | **accept** (override the critic) / **revise** (add guidance) / **abort** |
+| `final` | before the synthesized answer is accepted | **accept** / **request changes** (re-opens the weakest subtask once) / **abort** |
+
+Interactive prompts fall back to *approve* on EOF (non-interactive stdin), so
+enabling HITL never deadlocks a pipe or CI job. Swap the terminal reviewer for a
+web UI, Slack approval, or a queue by subclassing `Reviewer` in `ai/hitl.py` and
+passing it to `AsyncOrchestrator(reviewer=...)`.
+
+## Context isolation
+
+Configured under `context:`. Each worker is handed only a **scoped brief** and
+returns a short **summary** used for everything downstream:
+
+- `policy: scoped` (default) — a worker sees only the summaries of *its
+  dependencies*. `full` = full upstream results; `minimal` = just the goal;
+  `none` = only its own subtask.
+- `summary_target_tokens` — target size of each sub-agent's distilled summary.
+  Workers emit their own summary after a `===SUMMARY===` marker; if a model omits
+  it, the harness compacts the result deterministically as a fallback.
+- The **full** result is still what the evaluator judges and what the final
+  synthesis uses — only cross-agent *context* is compacted.
+
+Because dependent tasks receive summaries rather than full transcripts, adding
+more subtasks doesn't linearly inflate every downstream context window.
+
+## Layout
+
+| File | Purpose |
 |---|---|
-| `run.py` | CLI-Einstieg (`python -m ai.run "…"`) |
-| `loop.py` | `AsyncOrchestrator`: plan → execute(parallel) → evaluate → revise |
-| `agents/planner.py` | zerlegt das Ziel in Subtasks (JSON) |
-| `agents/worker.py` | bearbeitet einen Subtask, berücksichtigt Feedback |
-| `agents/evaluator.py` | bewertet Ergebnis (Score + pass/fail + Feedback) |
-| `agents/base.py` | Modell-Call mit Timeout, Retries + Backoff, Token-Zählung |
-| `models.py` | Provider-Registry + Anbieter-Adapter |
-| `config.py` / `config.yaml` | Rollen→Modell-Mapping, Budgets, Loop-Settings |
-| `observability.py` | Logger + JSONL-Trace (`runs/<id>.jsonl`) |
-| `schemas.py` | Datenstrukturen (Task, Budget, RunState, …) |
+| `run.py` | CLI entry (`python -m ai.run "…"`), HITL flags |
+| `loop.py` | `AsyncOrchestrator`: plan → waves(parallel) → evaluate → revise → synthesize, with checkpoints |
+| `context.py` | `ContextManager`: scoped briefs in, distilled summaries out |
+| `hitl.py` | `Reviewer` interface + `AutoReviewer` / `CLIReviewer` |
+| `agents/planner.py` | splits the goal into subtasks + dependencies (JSON) |
+| `agents/worker.py` | runs one subtask in isolation, returns result + summary |
+| `agents/evaluator.py` | scores a result (pass/fail + score + feedback) |
+| `agents/base.py` | model call with timeout, retries + backoff, token accounting |
+| `models.py` | provider registry + vendor adapters |
+| `config.py` / `config.yaml` | role→model mapping, budgets, context, HITL |
+| `observability.py` | logger + JSONL trace (`runs/<id>.jsonl`) |
+| `schemas.py` | data structures (Task, Budget, RunState, ContextPolicy, …) |
 
-## Was gehört (noch) in ein Harness?
+## What belongs in a harness? (checklist)
 
-Deine Frage — hier die vollständige Checkliste. ✅ = in diesem Gerüst enthalten,
-🔌 = als Hook/Stelle vorbereitet, an der du erweiterst.
+✅ = shipped here, 🔌 = a prepared hook/extension point.
 
-**Kern**
-- ✅ Orchestrierung / Planner-Coordinator (`loop.py`, `planner.py`)
-- ✅ Spezialisierte Sub-Agenten (`agents/`)
-- ✅ Evaluator / Kritiker mit Revisions-Schleife
-- ✅ Async-Ausführung mit begrenzter Parallelität (`asyncio` + Semaphore)
-- ✅ Multi-Provider-Modell-Routing pro Rolle (`config.yaml`, `models.py`)
+**Core**
+- ✅ Orchestration / planner-coordinator (`loop.py`, `planner.py`)
+- ✅ Specialized sub-agents (`agents/`)
+- ✅ Evaluator / critic with a revision loop
+- ✅ Async execution with bounded parallelism (`asyncio` + semaphore)
+- ✅ Dependency **waves** (`depends_on` → topological grouping)
+- ✅ Multi-provider model routing per role (`config.yaml`, `models.py`)
 
-**Robustheit & Kontrolle**
-- ✅ Budgets/Limits: Token, Wall-Clock, Iterationen, Revisions-Runden → **garantiertes Ende**
-- ✅ Abbruch-/Terminierungsbedingungen (`Budget.exceeded`)
-- ✅ Retries + exponentielles Backoff + Timeouts (`base.py`)
-- ✅ Fehlerbehandlung / Graceful Degradation (Task→FAILED statt Absturz)
-- ✅ Kosten-/Token-Accounting (`Usage`)
-- ✅ Human-in-the-Loop-Freigabe (`--approve` / `require_human_approval`)
+**Control & humans**
+- ✅ Budgets/limits: tokens, wall-clock, iterations, revision rounds → **guaranteed termination**
+- ✅ Stopping conditions (`Budget.exceeded`)
+- ✅ Retries + exponential backoff + timeouts (`base.py`)
+- ✅ Graceful degradation (task → FAILED instead of crashing the run)
+- ✅ Cost/token accounting (`Usage`)
+- ✅ Human-in-the-loop at plan / result / final (`hitl.py`) with pluggable reviewers
 
-**Beobachtbarkeit & Reproduzierbarkeit**
-- ✅ Strukturiertes Logging + JSONL-Trace pro Run (`observability.py`)
-- ✅ Persistenz des Ergebnisses (`runs/<id>.result.json`)
-- ✅ Run-IDs, Config-Snapshot im Trace
-- 🔌 Checkpoint/Resume mitten im Lauf (RunState ist bereits serialisierbar)
+**Context**
+- ✅ Sub-agent context isolation (scoped briefs, `context.py`)
+- ✅ Compaction of results into distilled summaries (worker summary or fallback)
+- 🔌 Structured note-taking / shared scratchpad persisted outside the window
+- 🔌 Prompt-/result-caching
 
-**Fähigkeiten & Sicherheit (nächste sinnvolle Schritte)**
-- 🔌 Tools / Function-Calling für Agenten (Datei-, Shell-, HTTP-Tools; MCP-Server)
-- 🔌 Guardrails: Ein-/Ausgabe-Validierung, Schema-Checks, Content-Filter
-- 🔌 Geteiltes Gedächtnis / Blackboard zwischen Agenten (aktuell einfacher `context`-String)
-- 🔌 Task-Abhängigkeiten (`depends_on`) als Wellen ausführen (Grundgerüst im `loop.py` kommentiert)
-- 🔌 Prompt-Caching / Ergebnis-Caching
-- 🔌 Secret-Management jenseits `.env` (Vault o. Ä.)
-- 🔌 Eval-/Regressions-Suite mit Golden-Tasks (der Evaluator ist der Laufzeit-Teil davon)
-- 🔌 Rate-Limiting pro Anbieter, Circuit-Breaker
+**Observability & reproducibility**
+- ✅ Structured logging + JSONL trace per run (`observability.py`)
+- ✅ Result persistence (`runs/<id>.result.json`)
+- ✅ Run ids + config snapshot in the trace
+- 🔌 Checkpoint/resume mid-run (`RunState` is already serializable)
 
-Faustregel: Alles, was einen Agenten **stoppen** (Budget, Timeout, Guardrail),
-**prüfen** (Evaluator, Schema) oder **nachvollziehen** (Trace, Persistenz) lässt,
-gehört ins Harness — nicht in die einzelnen Agenten.
+**Capabilities & safety (next steps)**
+- 🔌 Tools / function-calling for agents (file/shell/HTTP tools; MCP servers) — invest in the ACI as Anthropic recommends
+- 🔌 Guardrails: input/output validation, schema checks, content filters
+- 🔌 Secret management beyond `.env` (Vault, etc.)
+- 🔌 Eval/regression suite with golden tasks (the evaluator is the runtime half)
+- 🔌 Per-provider rate limiting, circuit breakers
+
+Rule of thumb: anything that **stops** an agent (budget, timeout, guardrail),
+**checks** it (evaluator, schema, human), or makes it **reproducible** (trace,
+persistence) belongs in the harness — not inside the individual agents.
+
+## Notes on model ids
+
+The Anthropic model ids in `config.yaml` are current as of writing; verify the
+latest at <https://docs.claude.com/en/docs/about-claude/models>. The OpenAI and
+Gemini ids in the commented examples are placeholders — substitute a current id.
+The `google` adapter is intentionally minimal; check it against the
+`google-genai` SDK version you install.
