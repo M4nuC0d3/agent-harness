@@ -4,11 +4,11 @@ A coordinator setup for Claude Code plus a programmatic multi-agent harness.
 
 There are **two ways to use this**, and you can use either on its own:
 
-| | **A. Native Claude Code** | **B. The `ai/` harness** |
+| | **A. Native agent CLIs** | **B. The `ai/` harness** |
 |---|---|---|
-| What it is | Claude Code acts as coordinator, delegating to sub-agents | A Python orchestrator you run from the terminal |
-| Setup | copy 2 things into your project | `pip install` + an API key |
-| Models | Claude models only (opus / sonnet / haiku) | Claude, OpenAI, Gemini, local — mixed in one run |
+| What it is | Claude Code / Codex / Gemini / Vibe act as coordinator, delegating to sub-agents | A Python orchestrator you run from the terminal |
+| Setup | copy `agents/` + the generated files | `pip install` + an API key |
+| Models | whatever that CLI supports | Claude, OpenAI, Gemini, local — mixed in one run |
 | Parallelism | Claude Code decides | real `asyncio`, dependency waves |
 | Cost | your Claude Code plan | billed against your API key |
 | Best for | interactive work inside a repo | scripted, parallel, or mixed-vendor runs |
@@ -19,28 +19,38 @@ There are **two ways to use this**, and you can use either on its own:
 
 ## A. Use it in Claude Code (2 minutes, no Python, no API key)
 
-### 1. Copy two things into your project
+### 1. Copy the agent files into your project
 
 From this repo into the **root of the project you want to work in**:
 
 ```bash
-cp CLAUDE.md              /path/to/your-project/
-cp -r .claude             /path/to/your-project/
+cp -r agents/  AGENTS.md  CLAUDE.md  GEMINI.md  .claude/  /path/to/your-project/
 ```
 
 That gives your project:
 
 ```
 your-project/
-├── CLAUDE.md                  # makes Claude Code the planner/coordinator
-└── .claude/agents/
-    ├── researcher.md          # gathers context (read-only, haiku)
-    ├── implementer.md         # writes code + runs it (sonnet)
-    └── evaluator.md           # reviews results, PASS/FAIL (read-only, opus)
+├── agents/                    # SOURCE OF TRUTH — edit only here
+│   ├── coordinator.md         #   shared coordinator instructions
+│   ├── roles/*.md             #   researcher / implementer / evaluator prompts
+│   ├── roles.yaml             #   per-role tools + model, per vendor
+│   └── sync.py                #   regenerates every file below
+├── AGENTS.md                  # generated — read by Codex, Mistral Vibe, 20+ others
+├── CLAUDE.md                  # generated — Claude Code (imports AGENTS.md)
+├── GEMINI.md                  # generated — Gemini CLI (imports AGENTS.md)
+└── .claude/agents/            # generated — Claude Code native sub-agents
+    ├── researcher.md          #   gathers context (read-only, haiku)
+    ├── implementer.md         #   writes code + runs it (sonnet)
+    └── evaluator.md           #   reviews results, PASS/FAIL (read-only, opus)
 ```
 
-If your project already has a `CLAUDE.md`, don't overwrite it — paste the
-sections you want (Role, Sub-agents, Human checkpoints) into yours.
+**One source, many tools.** Edit `agents/`, then run `python agents/sync.py`.
+Add `python agents/sync.py --check` to CI so the generated files can't drift.
+See `agents/README.md` for which tool reads which file.
+
+If your project already has an `AGENTS.md` or `CLAUDE.md`, merge rather than
+overwrite: move your content into `agents/coordinator.md` first.
 
 ### 2. Start Claude Code and verify
 
@@ -204,14 +214,20 @@ Anthropic's published guidance: **[`ai/README.md`](ai/README.md)**.
 | A run costs more than expected | Lower `budget.max_tokens` / `max_iterations` in `ai/config.yaml`, or `AI_FORCE_MODEL=anthropic:claude-haiku-4-5-20251001`. |
 | Interactive prompts never appear | `--interactive` needs a real terminal; piped stdin auto-approves by design. |
 | `'claude' not found on PATH` | Install the CLI and log in, or set `AI_CLAUDE_BIN` to its full path. |
+| Edited `CLAUDE.md` and it got overwritten | It's generated. Edit `agents/coordinator.md` (or `agents/vendor/claude.md`) and run `python agents/sync.py`. |
+| Codex/Vibe ignore my `MISTRAL.md`/`CODEX.md` | Neither filename is read by anything. Both tools read `AGENTS.md`. |
 | A CLI provider fails after a vendor changes flags | Override without editing code: `AI_CLAUDE_ARGS="-p {prompt}"` (same for `AI_CODEX_ARGS`, `AI_GEMINI_ARGS`). |
 | `gemini_cli` bills the API anyway | Unset `GEMINI_API_KEY`; otherwise the CLI authenticates with the key. |
 
 ## Layout
 
 ```
-CLAUDE.md              coordinator instructions for Claude Code
-.claude/agents/        native Claude Code sub-agents (researcher/implementer/evaluator)
+agents/                SOURCE OF TRUTH for all agent instructions (see agents/README.md)
+  sync.py              regenerates AGENTS.md, CLAUDE.md, GEMINI.md, .claude/agents/
+AGENTS.md              generated: Codex, Mistral Vibe, and 20+ other agents
+CLAUDE.md              generated: Claude Code
+GEMINI.md              generated: Gemini CLI
+.claude/agents/        generated: native Claude Code sub-agents
 ai/                    the async Python harness  (see ai/README.md)
   run.py               CLI entry point
   loop.py              orchestrator: plan → waves → evaluate → revise → synthesize
