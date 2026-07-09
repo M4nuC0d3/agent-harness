@@ -1,11 +1,19 @@
 # ===========================================================================
 #  MODEL ROUTING  —  which model each agent role uses. THIS is the knob.
 #
-#  provider:  anthropic | openai | google | local | mock | <your own>
-#  Swap provider/model per role freely; mix vendors in the same run.
-#  Global override without touching this file:
+#  provider:
+#    API key path (billed per token):
+#      anthropic | openai | google | local
+#    Subscription path (drives the vendor agent CLI; uses your account login):
+#      claude_cli | codex_cli | gemini_cli
+#    Offline:
+#      mock
+#
+#  Swap provider/model per role freely; mix vendors AND billing paths in the
+#  same run. Global override without touching this file:
 #      AI_FORCE_MODEL="mock:mock"       -> dry run, no keys / no network
 #      AI_FORCE_MODEL="anthropic:claude-haiku-4-5-20251001"  -> cheap everything
+#      AI_FORCE_MODEL="claude_cli:sonnet"                    -> everything on the plan
 #
 #  Current Anthropic model ids (verify latest at
 #  https://docs.claude.com/en/docs/about-claude/models):
@@ -48,6 +56,23 @@ models:
   # judge:
   #   provider: google
   #   model: gemini-2.5-pro        # example; use a current Gemini model id
+
+  # --- SUBSCRIPTION PATH: shell out to the vendor agent CLI instead of the API
+  # Usage draws on your plan (Claude / ChatGPT / Google account) rather than an
+  # API key. Requires the CLI installed and logged in. Trade-offs: temperature
+  # and max_tokens are ignored, token counts are ESTIMATES, one process per call.
+  # Lower loop.max_concurrency to 1-2 — plan limits are sized for one human.
+  # Use model: inherit to let the CLI decide.
+  #
+  # worker:
+  #   provider: claude_cli         # `claude -p`
+  #   model: sonnet                # opus | sonnet | haiku | full id | inherit
+  # worker:
+  #   provider: codex_cli          # `codex exec`
+  #   model: inherit
+  # worker:
+  #   provider: gemini_cli         # `gemini -p`  (unset GEMINI_API_KEY first!)
+  #   model: inherit
 
 # Hard limits — the run stops as soon as any of these is hit (guarantees
 # termination; no agent combination can loop forever).

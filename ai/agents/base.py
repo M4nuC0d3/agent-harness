@@ -5,7 +5,7 @@ import asyncio
 import random
 from typing import Optional
 
-from ..models import get_provider
+from ..providers import get_provider
 from ..observability import Trace, get_logger
 from ..schemas import LLMResponse, ModelSpec, Usage
 
