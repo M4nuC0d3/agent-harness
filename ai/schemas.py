@@ -24,6 +24,26 @@ class TaskStatus(str, Enum):
     FAILED = "failed"
 
 
+class ContextPolicy(str, Enum):
+    """How much context a sub-agent is handed when it is spawned.
+
+    Anthropic's context-engineering guidance: sub-agents do focused work in a
+    *clean* context window and return a distilled summary, so the coordinator's
+    window fills with insights, not raw transcripts. These policies pick how
+    aggressively we scope what a worker sees.
+
+        FULL     full results of finished tasks (most context, least isolation)
+        SCOPED   only the summaries of this task's dependencies (recommended)
+        MINIMAL  just the one-line overall goal
+        NONE     nothing but the subtask itself (maximum isolation)
+    """
+
+    FULL = "full"
+    SCOPED = "scoped"
+    MINIMAL = "minimal"
+    NONE = "none"
+
+
 @dataclass
 class Usage:
     """Token accounting, aggregated across every model call in a run."""
@@ -87,7 +107,8 @@ class Task:
     id: str = field(default_factory=lambda: _new_id("task"))
     status: TaskStatus = TaskStatus.PENDING
     depends_on: list[str] = field(default_factory=list)
-    result: Optional[str] = None
+    result: Optional[str] = None  # full worker output (what the evaluator sees)
+    summary: Optional[str] = None  # distilled recap handed to downstream agents
     feedback: Optional[str] = None  # last evaluator feedback, fed back on revision
     score: Optional[float] = None
     attempts: int = 0

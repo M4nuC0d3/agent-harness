@@ -180,11 +180,22 @@ class MockProvider(Provider):
         last = messages[-1]["content"] if messages else ""
 
         if "planner" in sys_l:
-            text = '{"tasks": ["Analyze the request", "Draft a solution", "Write the final answer"]}'
+            # Two independent subtasks (run in parallel), then one that depends
+            # on both — exercises dependency waves + scoped context downstream.
+            text = (
+                '{"tasks": ['
+                '{"id": "t1", "goal": "Research the inputs and constraints", "depends_on": []},'
+                '{"id": "t2", "goal": "Draft the core solution", "depends_on": []},'
+                '{"id": "t3", "goal": "Write the final answer", "depends_on": ["t1", "t2"]}'
+                "]}"
+            )
         elif "evaluator" in sys_l:
             text = '{"passed": true, "score": 0.9, "feedback": "Meets the definition of done (mock)."}'
         else:
-            text = f"[mock:{model}] Result for: {last[:160]}"
+            # Worker: include the ===SUMMARY=== marker so the compaction /
+            # context-isolation path is exercised offline.
+            body = f"[mock:{model}] Result for: {last[:160]}"
+            text = f"{body}\n\n===SUMMARY===\nProduced a mock result for the subtask."
 
         return LLMResponse(
             text=text,

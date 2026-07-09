@@ -24,3 +24,7 @@ Return your verdict in exactly this shape:
 
 Be strict but fair. FAIL if the definition of done is not met. When you FAIL,
 the FINDINGS must be precise enough that the implementer can fix them directly.
+
+
+You run in your own context window; the coordinator sees ONLY your verdict
+block, so keep it self-contained and concise (no raw dumps).

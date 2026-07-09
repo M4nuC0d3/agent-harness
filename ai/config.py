@@ -1,15 +1,18 @@
 """Load and validate config.yaml into typed objects.
 
-The config maps each agent *role* to a ModelSpec. That mapping is the whole
-point of "steuerbar welche Modelle" — change YAML (or one env var), not code.
+The config maps each agent *role* to a ModelSpec, and configures the two
+control surfaces added on top: human-in-the-loop checkpoints and sub-agent
+context isolation. The role->model mapping is the "steerable models" knob:
+change YAML (or one env var), never code.
 """
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from .context import ContextConfig
 from .schemas import Budget, ModelSpec
 
 try:
@@ -21,12 +24,42 @@ DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yaml")
 
 
 @dataclass
+class HitlConfig:
+    """Which human checkpoints are active, and how they prompt.
+
+    mode:     "auto" (no prompts) or "interactive" (ask on the terminal)
+    plan:     gate the plan before any work starts
+    results:  "off" | "on_fail" | "always" — when to review a subtask result
+    final:    gate the synthesized answer before accepting it
+    """
+
+    mode: str = "auto"
+    plan: bool = True
+    results: str = "on_fail"
+    final: bool = False
+
+    @property
+    def interactive(self) -> bool:
+        return self.mode == "interactive"
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "HitlConfig":
+        return cls(
+            mode=str(d.get("mode", "auto")).lower(),
+            plan=bool(d.get("plan", True)),
+            results=str(d.get("results", "on_fail")).lower(),
+            final=bool(d.get("final", False)),
+        )
+
+
+@dataclass
 class HarnessConfig:
     models: dict[str, ModelSpec]  # role -> ModelSpec
     budget: Budget
+    context: ContextConfig = field(default_factory=ContextConfig)
+    hitl: HitlConfig = field(default_factory=HitlConfig)
     pass_threshold: float = 0.7
     max_concurrency: int = 4
-    require_human_approval: bool = False
     runs_dir: str = "runs"
 
     def model_for(self, role: str) -> ModelSpec:
@@ -75,8 +108,9 @@ def load_config(path: Optional[os.PathLike | str] = None) -> HarnessConfig:
     return HarnessConfig(
         models=models,
         budget=budget,
+        context=ContextConfig.from_dict(data.get("context", {})),
+        hitl=HitlConfig.from_dict(data.get("hitl", {})),
         pass_threshold=float(loop.get("pass_threshold", 0.7)),
         max_concurrency=int(loop.get("max_concurrency", 4)),
-        require_human_approval=bool(loop.get("require_human_approval", False)),
         runs_dir=str(loop.get("runs_dir", "runs")),
     )
