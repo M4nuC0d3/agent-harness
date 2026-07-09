@@ -6,8 +6,10 @@ duplicated here. Use `/memory show` to inspect the assembled context and
 `/memory refresh` after editing any source file under `agents/`.
 
 Gemini CLI has no native sub-agent files. Adopt the role inline when you take on
-a subtask ("acting as the `evaluator` role from AGENTS.md, review this change"),
-or use the `ai/` harness for real delegation.
+a subtask ("acting as the `evaluator` role from AGENTS.md, review this change").
+
+**Model steering:** pass `--model` when you start the CLI; the roles themselves
+are model-agnostic.
 
 **Note:** when both `GEMINI.md` and `AGENTS.md` exist in a directory, some Gemini
 surfaces prefer `GEMINI.md` — which is why this file imports the canonical one
@@ -17,5 +19,3 @@ shared file via `settings.json`:
 ```json
 { "context": { "fileName": ["AGENTS.md", "GEMINI.md"] } }
 ```
-
-**Cross-vendor:** to run these roles on non-Google models, use the `ai/` harness.

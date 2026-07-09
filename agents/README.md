@@ -6,16 +6,17 @@ Edit here, then run:
 ```bash
 python agents/sync.py          # regenerate
 python agents/sync.py --check  # CI: fail if anything is stale
-python agents/sync.py --vibe   # also emit Mistral Vibe subagents
 ```
+
+No third-party packages — stdlib `tomllib` only (Python 3.11+).
 
 ## Source (edit these)
 
 | File | What it is |
 |---|---|
-| `coordinator.md` | the shared coordinator instructions (vendor-neutral) |
-| `roles/researcher.md` · `roles/implementer.md` · `roles/evaluator.md` | the three role prompts (vendor-neutral) |
-| `roles.yaml` | per-role description + per-vendor tools/model |
+| `coordinator.md` | the shared coordinator instructions — model- and vendor-agnostic |
+| `roles/researcher.md` · `roles/implementer.md` · `roles/evaluator.md` | the three role prompts |
+| `roles.toml` | per-role description + per-vendor tools/model |
 | `vendor/claude.md` · `vendor/gemini.md` | the bits that are genuinely tool-specific |
 
 ## Generated (never edit)
@@ -26,7 +27,7 @@ python agents/sync.py --vibe   # also emit Mistral Vibe subagents
 | `CLAUDE.md` | Claude Code (thin; `@AGENTS.md` import + Claude specifics) |
 | `GEMINI.md` | Gemini CLI (thin; `@./AGENTS.md` import + Gemini specifics) |
 | `.claude/agents/*.md` | Claude Code native sub-agents (frontmatter + prompt) |
-| `.vibe/agents/*.toml`, `.vibe/prompts/*.md` | Mistral Vibe sub-agents (opt-in, `--vibe`) |
+| `.vibe/agents/*.toml`, `.vibe/prompts/*.md` | Mistral Vibe native sub-agents |
 
 ## Why a generator, not just imports?
 
@@ -39,6 +40,9 @@ Import support is inconsistent, so no single mechanism covers every tool:
 So `AGENTS.md` must be self-contained, while `CLAUDE.md` and `GEMINI.md` stay
 thin and import it. Rendering all of them from one source is the only way to get
 both without maintaining the same instructions three times.
+
+`--check` in CI proves it: edit a role body and exactly the files that *embed*
+it go stale, while the ones that *import* it don't.
 
 ## There is no `MISTRAL.md` or `CODEX.md` — on purpose
 
@@ -58,24 +62,48 @@ filename first.
 |---|---|---|
 | Claude Code | yes | `.claude/agents/*.md` |
 | Mistral Vibe | yes (spawned via its `task` tool) | `.vibe/agents/*.toml` |
-| Codex | no native sub-agent files | adopt the role inline |
-| Gemini CLI | no native sub-agent files | adopt the role inline |
+| Codex | no | adopt the role inline |
+| Gemini CLI | no | adopt the role inline |
 
-Where a tool has no sub-agent mechanism, the roles still work: they're spelled
-out in `AGENTS.md`, and the agent adopts one per subtask. For real parallel
-delegation across vendors, use the `ai/` harness.
+Where a tool has no sub-agent mechanism the roles still work: they're spelled out
+in `AGENTS.md`, and the agent adopts one per subtask. Context isolation then
+becomes a discipline rather than a mechanism — the loop is unchanged.
+
+## Model steering
+
+The roles say nothing about models. Where a tool supports pinning one, it lives
+in `roles.toml`:
+
+```toml
+[roles.evaluator.claude]
+tools = ["Read", "Grep", "Glob", "Bash"]
+model = "opus"
+```
+
+Claude Code reads that as the sub-agent's `model:` frontmatter field;
+`CLAUDE_CODE_SUBAGENT_MODEL` overrides all of them at once. Other CLIs take a
+`--model` flag when you start them.
 
 ## Adding a role or a vendor
 
-- **New role**: add `roles/<name>.md`, add an entry to `roles.yaml` (description,
-  per-vendor tools/model), add the name to `order:`, then `python agents/sync.py`.
+- **New role**: add `roles/<name>.md`, add a `[roles.<name>]` block to
+  `roles.toml` (plus `[roles.<name>.claude]` / `[roles.<name>.vibe]`), append the
+  name to `order`, then `python agents/sync.py`.
 - **New vendor**: add a `render_*` function in `sync.py` and wire it into
   `build()`. Keep `AGENTS.md` neutral — vendor extras belong in that tool's own
-  file.
+  file, or in this README if the tool has no file of its own.
+
+## Going programmatic
+
+Don't rebuild an orchestrator around these prompts. For unattended runs use the
+vendor's agent SDK — **Claude Agent SDK**, **OpenAI Agents SDK**, **Google ADK** —
+which ship the agent loop, tool execution, sub-agents, and permission hooks. The
+role prompts here drop straight into their sub-agent definitions.
 
 ## Verify before trusting
 
 The `.vibe/*.toml` schema beyond `agent_type` / `description` is best-effort;
-check it against the current Mistral Vibe docs. Tool names, frontmatter fields,
-and import syntax all change — when a tool stops picking something up, compare
-against its docs first, then fix the source here and regenerate.
+check it against the current Mistral Vibe docs, which document the prompt
+directory at user level. Tool names, frontmatter fields, and import syntax all
+change — when a tool stops picking something up, compare against its docs first,
+then fix the source here and regenerate.

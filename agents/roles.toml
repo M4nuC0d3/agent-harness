@@ -1,0 +1,62 @@
+# Single source of truth for the three sub-agent roles.
+# `agents/sync.py` renders every tool-specific file from this + roles/*.md.
+# Edit here, then run:  python agents/sync.py
+#
+# TOML so the generator needs no third-party packages (stdlib `tomllib`).
+
+order = ["researcher", "implementer", "evaluator"]
+
+# ---------------------------------------------------------------------------
+[roles.researcher]
+summary = "gather context (code + web), read-only"
+when = "you need facts or codebase understanding before planning/implementing"
+description = """
+Use this agent to gather context before planning or implementing — search the \
+codebase and the web, read docs and source, and return a concise findings \
+summary the coordinator can act on. Use it to answer "how does X work here?" or \
+"what's the current API for Y?". Read-only; it never modifies files.\
+"""
+
+[roles.researcher.claude]
+tools = ["Read", "Grep", "Glob", "WebFetch", "WebSearch"]
+model = "haiku" # fast/cheap: search
+
+[roles.researcher.vibe]
+enabled_tools = ["read", "grep", "ls"]
+
+# ---------------------------------------------------------------------------
+[roles.implementer]
+summary = "write/modify code + run it"
+when = "a subtask is a concrete, bounded implementation"
+description = """
+Use this agent to implement one well-scoped coding subtask — writing or \
+modifying code and running it to confirm it works. Delegate here once the plan \
+defines a concrete unit of work with a clear definition of done. Returns the \
+changed code plus a short summary of what it did and how it verified it.\
+"""
+
+[roles.implementer.claude]
+tools = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
+model = "sonnet" # balanced: implementation
+
+[roles.implementer.vibe]
+enabled_tools = ["read", "write_file", "edit", "bash", "grep"]
+
+# ---------------------------------------------------------------------------
+[roles.evaluator]
+summary = "review a result (PASS/FAIL + score + fixes), read-only"
+when = "**after every** implementation, before you accept it"
+description = """
+Use this agent after any implementation to verify it before accepting it. It \
+checks the change against the subtask's definition of done — correctness, \
+completeness, edge cases, tests, and obvious security issues — and returns a \
+PASS/FAIL verdict with a numeric score and specific, actionable fixes. \
+Read-only; it never edits code.\
+"""
+
+[roles.evaluator.claude]
+tools = ["Read", "Grep", "Glob", "Bash"]
+model = "opus" # strongest: judgment
+
+[roles.evaluator.vibe]
+enabled_tools = ["read", "grep", "ls", "bash"]
