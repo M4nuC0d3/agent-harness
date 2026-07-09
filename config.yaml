@@ -57,8 +57,27 @@ budget:
   max_iterations: 20
   max_revisions_per_task: 2
 
+# Sub-agent CONTEXT ISOLATION. Each worker starts with a clean, minimal context
+# and returns a distilled summary that flows downstream (Anthropic's
+# context-engineering pattern). Policy picks how tightly context is scoped:
+#   full    -> full results of finished tasks (least isolation)
+#   scoped  -> only summaries of THIS task's dependencies (recommended)
+#   minimal -> just the one-line goal
+#   none    -> nothing but the subtask itself (max isolation)
+context:
+  policy: scoped
+  summary_target_tokens: 400     # size of each sub-agent's distilled summary
+  max_context_tokens: 2000       # cap on the brief handed to a worker
+
+# HUMAN-IN-THE-LOOP checkpoints. mode "auto" runs unattended; "interactive"
+# asks on the terminal. CLI flags override: --interactive, --approve, --results.
+hitl:
+  mode: auto                     # auto | interactive
+  plan: true                     # review the plan before any work starts
+  results: on_fail               # off | on_fail | always  (review a subtask result)
+  final: false                   # review the synthesized answer before accepting
+
 loop:
-  pass_threshold: 0.7        # evaluator score needed to accept a subtask
-  max_concurrency: 4         # how many workers run at once
-  require_human_approval: false
+  pass_threshold: 0.7            # evaluator score needed to accept a subtask
+  max_concurrency: 4             # how many workers run at once
   runs_dir: runs
