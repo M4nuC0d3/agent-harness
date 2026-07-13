@@ -1,5 +1,5 @@
 {
-  "_comment": "Deploy to the managed-settings path for your OS. Not read from a repo.",
+  "_comment": "Org-level lockdown. Deploy to the managed-settings path for your OS (a system path requiring admin rights) \u2014 it is NOT read from a repo. A deny here cannot be overridden by any lower scope.",
   "permissions": {
     "disableBypassPermissionsMode": "disable"
   },

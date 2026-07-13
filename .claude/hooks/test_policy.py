@@ -4,7 +4,7 @@
 When enforcement moved out of the hook and into declarative rules and the
 sandbox, the protection had to *move*, not disappear. This asserts it did.
 
-    python agents/hooks/test_policy.py .claude/settings.json
+    python .claude/hooks/test_policy.py .claude/settings.json
 """
 from __future__ import annotations
 

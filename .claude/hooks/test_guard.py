@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Behavioural tests for the PreToolUse hook.
 
-The hook now only does what permission rules and the sandbox cannot:
-a session budget, and an opt-in accident catcher. Everything the hook used to
-check for files is covered by `permissions.deny` — see test_policy.py.
+The hook only does what permission rules and the sandbox cannot: a session
+budget, and an opt-in accident catcher. Everything it used to check for files is
+covered by `permissions.deny` — asserted in test_policy.py.
+
+    python .claude/hooks/test_guard.py .claude/hooks/guard.py
 """
 from __future__ import annotations
 
