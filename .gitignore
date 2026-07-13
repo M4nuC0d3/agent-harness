@@ -5,3 +5,19 @@ __pycache__/
 # handoff between context windows and belongs in the repo.
 .agent/trace.jsonl
 .agent/tool_calls.json
+
+# Secrets — belt-and-suspenders for the "never commit secrets" rule in AGENTS.md.
+# The permission deny rules and the sandbox stop the *agent* from reading these;
+# these lines stop a human `git add .` from committing them. Kept in sync with
+# .geminiignore. (Keeping a committed template? Add e.g. `!.env.example` below.)
+.env
+.env.*
+secrets/
+*.pem
+*.key
+id_rsa
+id_ed25519
+
+# Personal, per-machine Claude Code overrides — written by `/sandbox` when you
+# pick a mode. Never shared.
+.claude/settings.local.json
