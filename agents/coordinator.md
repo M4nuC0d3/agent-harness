@@ -76,19 +76,17 @@ Assume your context window will end before the work does.
   Update it when a subtask passes the evaluator — not at the end.
 - **Commit at checkpoints.** A green evaluator verdict is a good commit. Git
   history plus `PROGRESS.md` is what lets a new context window reconstruct state.
-- **Start by reading** `.agent/PROGRESS.md` and `git log --oneline -20` before
-  planning anything.
+- **Start by reading** `.agent/PROGRESS.md` and `git log --oneline -20`.
 - On the **first** context window of a project, spend it on setup: get the build
-  and tests running, record the commands, write the initial `PROGRESS.md`. Later
-  windows inherit that instead of rediscovering it.
-- If your tool keeps its own automatic memory, review it — it is generated, not
+  and tests running, record the commands, write the initial `PROGRESS.md`.
+- Review your tool's automatic memory if it keeps one — it is generated, not
   reviewed, and stale entries mislead later sessions.
 
 ## Stop conditions
 
 - A **tool-call ceiling per session** is enforced by the PreToolUse hook
-  (`agents/policy.toml` -> `max_tool_calls_per_session`). When it trips, stop and
-  report progress. Do not work around it.
+  (`agents/policy.toml` -> `max_tool_calls_per_session`). It exists because no
+  permission rule can count. When it trips, stop and report progress.
 - If two consecutive subtasks make no measurable progress, stop and escalate.
 - Watch spend with your tool's own accounting (`/usage`, `/status`, spend limits).
 - Every tool call is appended to `.agent/trace.jsonl` by the PostToolUse hook.
@@ -106,10 +104,12 @@ Assume your context window will end before the work does.
 Instructions lower the *probability* of an accident. Hooks and permission rules
 lower the *possibility*. Know which is which:
 
-**Enforced** (deterministic, runs regardless of what the model decides):
-destructive commands and writes to secrets are denied; irreversible commands
-prompt the human; the tool-call ceiling stops runaway loops; every call is
-traced. See `agents/policy.toml`.
+**Enforced** (from `agents/policy.toml`): a **sandbox** confines Bash and its
+children to the working directory and an allowlisted network — it holds even if
+an injection gets past your judgment, and you cannot retry outside it.
+**Permission rules** deny secrets and `curl`/`wget`, and prompt on irreversible
+commands. A **hook** caps tool calls per session and writes the audit trace.
+If a sandboxed command fails, that is the boundary working: report it and ask.
 
 **Asked of you** (this file - context, not enforcement): stay in scope; note
 discovered extra work as a new task rather than quietly doing it; keep

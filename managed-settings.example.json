@@ -1,0 +1,12 @@
+{
+  "_comment": "Deploy to the managed-settings path for your OS. Not read from a repo.",
+  "permissions": {
+    "disableBypassPermissionsMode": "disable"
+  },
+  "allowManagedPermissionRulesOnly": true,
+  "allowManagedHooksOnly": true,
+  "sandbox": {
+    "enabled": true,
+    "allowUnsandboxedCommands": false
+  }
+}
