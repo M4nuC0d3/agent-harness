@@ -1,0 +1,83 @@
+# Enforcement policy — the deterministic layer.
+#
+# AGENTS.md is *context*: it lowers the probability of an accident. This file
+# lowers the *possibility*. `agents/sync.py` renders it into
+# `.claude/settings.json` (declarative permission rules) and
+# `.claude/hooks/policy.json` (read by the PreToolUse hook, which runs before
+# the permission check and can block even in bypass mode).
+#
+# Rule of thumb: use permission rules for anything a pattern can express; use
+# the hook when the decision needs logic, state, or the expanded command.
+
+# ---------------------------------------------------------------------------
+[budget]
+# Deterministic stop condition. The hook counts tool calls per session and
+# denies further calls past this ceiling — the harness cannot loop forever,
+# regardless of what the model decides. 0 disables the ceiling.
+max_tool_calls_per_session = 400
+
+# Where the hook keeps its per-session counters and the audit trail.
+state_dir = ".agent"
+
+# ---------------------------------------------------------------------------
+[bash]
+# Denied outright by the hook (regex, case-insensitive, matched against the
+# command string the model is about to run).
+#
+# Note on `rm`: a blanket deny on `rm -rf` would block `rm -rf node_modules`,
+# and a guard that blocks everyday work gets switched off — at which point it
+# protects nothing. So: deny only catastrophic targets (/, ~, $HOME, bare *),
+# and *ask* for every other recursive rm (see [bash].ask below).
+deny = [
+  '\brm\s+-\S*[rf]\S*\s+\*',                 # rm -rf *
+  '\brm\b[^;&|]*\s(/|~|\$HOME)/?(\s|$)',     # any rm whose target is / or ~ or $HOME
+  'git\s+push\b.*--force(-with-lease)?\b.*\b(main|master)\b',
+  '\bgit\s+reset\s+--hard\b.*\borigin/',
+  '--no-verify',                             # skipping hooks/CI checks
+  '\bchmod\s+777\b',
+  '\b(DROP|TRUNCATE)\s+(TABLE|DATABASE)\b',
+  '\bmkfs\b|\bdd\s+if=.*of=/dev/',
+  'curl\b[^|]*\|\s*(ba)?sh',                 # curl | sh
+  '>\s*\.env',                               # clobbering secrets
+]
+
+# Prompt the human instead of blocking (irreversible, but sometimes intended).
+ask = [
+  '\brm\s+-\S*[rf]',                         # any other recursive/forced rm
+  '\bgit\s+push\b',
+  '\bgit\s+reset\s+--hard\b',
+  '\b(terraform|kubectl)\s+(apply|delete)\b',
+  '\b(alembic|migrate|prisma)\b.*\b(up|deploy|reset)\b',
+  '\bnpm\s+publish\b|\bpypi\b|\btwine\s+upload\b',
+]
+
+# ---------------------------------------------------------------------------
+[files]
+# The hook blocks Write/Edit to these; permission `deny` rules block Read.
+# Note: a PreToolUse hook is the only reliable block — permission rules and
+# ignore files can be worked around by indexing and other read paths.
+protected = [
+  '(^|/)\.env($|\.)',
+  '(^|/)secrets?/',
+  '(^|/)\.git/',
+  '(^|/)id_(rsa|ed25519)($|\.)',
+  '\.pem$|\.key$|credentials(\.json)?$',
+]
+
+# ---------------------------------------------------------------------------
+[permissions]
+# Rendered verbatim into .claude/settings.json. Verify the rule syntax against
+# the current Claude Code settings docs — it evolves.
+deny = [
+  "Read(./.env)",
+  "Read(./.env.*)",
+  "Read(./secrets/**)",
+  "Read(./**/*.pem)",
+  "Read(./**/id_rsa)",
+]
+# Untrusted content enters the loop here (see AGENTS.md, "Untrusted content"),
+# so a human sees the domain before it is fetched.
+ask = [
+  "WebFetch",
+  "Bash(git push:*)",
+]

@@ -17,6 +17,9 @@ No third-party packages — stdlib `tomllib` only (Python 3.11+).
 | `coordinator.md` | the shared coordinator instructions — model- and vendor-agnostic |
 | `roles/researcher.md` · `roles/implementer.md` · `roles/evaluator.md` | the three role prompts |
 | `roles.toml` | per-role description + per-vendor tools/model |
+| `policy.toml` | the enforcement policy: denied/asked commands, protected paths, tool-call ceiling |
+| `hooks/guard.py` · `hooks/trace.py` | the deterministic layer (+ `hooks/test_guard.py`, 36 cases) |
+| `evals/golden-tasks.md` | behavioural evals: does the setup actually work? |
 | `vendor/claude.md` · `vendor/gemini.md` | the bits that are genuinely tool-specific |
 
 ## Generated (never edit)
@@ -26,8 +29,11 @@ No third-party packages — stdlib `tomllib` only (Python 3.11+).
 | `AGENTS.md` | **Codex**, **Mistral Vibe**, and 20+ other agents — an open format stewarded by the Agentic AI Foundation |
 | `CLAUDE.md` | Claude Code (thin; `@AGENTS.md` import + Claude specifics) |
 | `GEMINI.md` | Gemini CLI (thin; `@./AGENTS.md` import + Gemini specifics) |
+| `.claude/settings.json` | Claude Code: permission rules + hook registration |
+| `.claude/hooks/*` | Claude Code: `guard.py`, `trace.py`, `policy.json` |
 | `.claude/agents/*.md` | Claude Code native sub-agents (frontmatter + prompt) |
 | `.vibe/agents/*.toml`, `.vibe/prompts/*.md` | Mistral Vibe native sub-agents |
+| `.geminiignore` | Gemini CLI: keeps secrets out of view (advisory only) |
 
 ## Why a generator, not just imports?
 
@@ -69,6 +75,60 @@ Where a tool has no sub-agent mechanism the roles still work: they're spelled ou
 in `AGENTS.md`, and the agent adopts one per subtask. Context isolation then
 becomes a discipline rather than a mechanism — the loop is unchanged.
 
+## Instructions vs. enforcement
+
+Anthropic's own docs are blunt about it: an agent treats `CLAUDE.md` as context,
+**not** as enforced configuration — to block an action regardless of what the
+model decides, use a `PreToolUse` hook. The same split exists everywhere: for
+Codex, `AGENTS.md` lowers the probability of an accident while execpolicy and
+the sandbox lower the possibility; in Vibe, the `safety` field on a tool is a
+visual hint with no enforcement behind it.
+
+So this repo keeps two layers, both generated from `agents/policy.toml`:
+
+- **Permission rules** (`.claude/settings.json`) — declarative allow/ask/deny for
+  anything a pattern can express.
+- **Hooks** (`.claude/hooks/`) — code that sees the real command. `PreToolUse`
+  runs *before* the permission check, so its `deny` holds even under
+  `--dangerously-skip-permissions`; a hook can tighten policy but can never
+  loosen a `deny` rule. `PostToolUse` writes the audit trail.
+
+The guard **fails closed**: if `policy.json` is missing or corrupt it blocks every
+call and tells you to regenerate. A guard that silently stops guarding is worse
+than one that stops the agent, because the human keeps believing they're covered.
+
+Two deliberate calibrations:
+
+- `rm -rf node_modules` **asks**; only `/`, `~`, `$HOME` and bare `*` are denied.
+  A guard that blocks everyday work gets switched off, and then it protects nothing.
+- Ignore files (`.geminiignore`) and permission rules can be worked around by
+  other read paths. Only the hook is a reliable block.
+
+Test it without a model in the loop:
+
+```bash
+python agents/hooks/test_guard.py agents/hooks/guard.py
+```
+
+## Context budget
+
+Anthropic warns that instruction files over ~200 lines consume more context and
+may reduce adherence — and that `@path` imports help organization but do **not**
+reduce context, since imports load at launch. So the role prompts were pulled out
+of `AGENTS.md`; an agent reads `agents/roles/<name>.md` only when it adopts that
+role, and tools with native sub-agents load their own copy on delegation.
+
+Current load: `AGENTS.md` 138 lines; Claude Code sees 171 (`CLAUDE.md` + import).
+Keep it that way — measure after editing `coordinator.md`.
+
+## Long runs
+
+`.agent/PROGRESS.md` plus git history is how a fresh context window reconstructs
+state. The coordinator is told to update it when a subtask passes the evaluator,
+commit at green checkpoints, read it before planning, and spend the first context
+window of a project on setup. `PROGRESS.md` is committed; `trace.jsonl` and the
+session counters are gitignored.
+
 ## Model steering
 
 The roles say nothing about models. Where a tool supports pinning one, it lives
@@ -100,10 +160,22 @@ vendor's agent SDK — **Claude Agent SDK**, **OpenAI Agents SDK**, **Google ADK
 which ship the agent loop, tool execution, sub-agents, and permission hooks. The
 role prompts here drop straight into their sub-agent definitions.
 
+## Known gaps
+
+- **Project facts.** This layer is pure process. It does not know your build or
+  test commands. Run `/init` in the target repo and merge into `coordinator.md`.
+- **Enforcement ships wired for Claude Code only.** `guard.py` is a plain
+  stdin→JSON script; porting it to Codex's execpolicy/hooks, Vibe's hooks, or
+  Gemini's sandbox is straightforward but not done here.
+- **Sub-agent least privilege** relies on the tool honoring `tools:` /
+  `enabled_tools`. The hook does not enforce it.
+
 ## Verify before trusting
 
-The `.vibe/*.toml` schema beyond `agent_type` / `description` is best-effort;
-check it against the current Mistral Vibe docs, which document the prompt
-directory at user level. Tool names, frontmatter fields, and import syntax all
-change — when a tool stops picking something up, compare against its docs first,
-then fix the source here and regenerate.
+Hook schemas move fast — published sources already disagree on whether Claude
+Code exposes 27 or 30 lifecycle events, and exit-code semantics have a real
+footgun (exit 1 blocks nothing; exit 2 blocks; never mix exit 2 with JSON on
+stdout). The `.vibe/*.toml` schema beyond `agent_type` / `description` is
+best-effort. Everything here was tested against simulated payloads, not a live
+CLI. When a tool stops picking something up, compare against its docs first, then
+fix the source here and regenerate.

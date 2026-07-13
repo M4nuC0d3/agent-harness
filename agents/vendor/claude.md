@@ -15,8 +15,15 @@ Sub-agents **cannot** spawn further sub-agents — all branching goes through yo
   (highest precedence; useful for cost/compliance ceilings).
 
 After editing an agent file on disk, restart the session; agents created or
-edited via `/agents` take effect immediately. Project settings (permissions etc.)
-go in `.claude/settings.json`.
+edited via `/agents` take effect immediately.
+
+**Enforcement.** `.claude/settings.json` (generated from `agents/policy.toml`)
+carries the permission rules and registers two hooks: a `PreToolUse` guard that
+denies destructive commands, refuses writes to secrets, and enforces a per-
+session tool-call ceiling; and a `PostToolUse` tracer that appends every call to
+`.agent/trace.jsonl`. Hooks run before the permission check, so a `deny` holds
+even under `--dangerously-skip-permissions`. A hook can tighten policy, never
+loosen a `deny` rule. Change the policy, not the generated files.
 
 For programmatic, unattended runs, use the **Claude Agent SDK** — it is the
 Claude Code harness as a library (agent loop, sub-agents, hooks, permissions),

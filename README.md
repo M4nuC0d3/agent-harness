@@ -27,7 +27,7 @@ source.
 Copy into the root of the project you want to work in:
 
 ```bash
-cp -r agents/  AGENTS.md  CLAUDE.md  GEMINI.md  .claude/  .vibe/  /path/to/your-project/
+cp -r agents/ AGENTS.md CLAUDE.md GEMINI.md .geminiignore .claude/ .vibe/ /path/to/your-project/
 ```
 
 Then start your agent (`claude`, `codex`, `gemini`, `vibe`) in that directory and
@@ -50,6 +50,44 @@ overwrite: move your content into `agents/coordinator.md` first.
   on repeated failure; and a final review.
 - **Small contexts.** Each role gets a scoped brief and returns a distilled
   summary, so the coordinator's context fills with conclusions, not transcripts.
+- **Enforcement, not just instructions.** A `PreToolUse` hook denies `rm -rf ~`,
+  force-push to main, and writes to `.env` — deterministically, even in
+  `--dangerously-skip-permissions` mode. It also enforces a per-session
+  tool-call ceiling, so a runaway loop stops itself.
+- **An audit trail.** Every tool call lands in `.agent/trace.jsonl`.
+- **Long runs.** `.agent/PROGRESS.md` plus commits at evaluator-green checkpoints
+  let a fresh context window pick the work back up.
+
+## Instructions vs. enforcement
+
+`AGENTS.md` is *context*: it lowers the **probability** of an accident. Hooks and
+permission rules lower the **possibility**. Both matter, and it's worth knowing
+which is which:
+
+| Layer | Mechanism | Guarantee |
+|---|---|---|
+| `AGENTS.md`, role prompts | context the model reads | probabilistic |
+| `.claude/settings.json` permissions | declarative allow/ask/deny | deterministic, pattern-level |
+| `.claude/hooks/guard.py` (PreToolUse) | your code sees the real command | deterministic; holds in bypass mode |
+| `.claude/hooks/trace.py` (PostToolUse) | appends `.agent/trace.jsonl` | runs on every call |
+
+Everything above is generated from **`agents/policy.toml`**. Change the policy,
+not the generated files. Test the guard without a model in the loop:
+
+```bash
+python agents/hooks/test_guard.py agents/hooks/guard.py   # 36 cases
+```
+
+The guard denies only catastrophic targets (`rm -rf /`, `~`, `$HOME`, `*`) and
+*asks* for everyday recursive deletes like `rm -rf node_modules`. A guard that
+blocks real work gets switched off, and then it protects nothing.
+
+## Evals
+
+`--check` proves the files are in sync; it says nothing about whether they work.
+`agents/evals/golden-tasks.md` holds six behavioural tasks — does it plan first,
+does the evaluator actually gate, does it resist prompt injection, does the hook
+hold when the model is wrong. Run them in a scratch repo and score Pass/Fail.
 
 ## One source, many tools
 
@@ -58,14 +96,21 @@ agents/                  ← EDIT ONLY HERE
 ├── coordinator.md       #   shared coordinator instructions (model-agnostic)
 ├── roles/*.md           #   researcher / implementer / evaluator prompts
 ├── roles.toml           #   per-role description + per-vendor tools/model
+├── policy.toml          #   the enforcement policy (deny / ask / budget)
+├── hooks/               #   guard.py, trace.py + their test matrix
+├── evals/               #   golden tasks: does the setup actually work?
 ├── vendor/*.md          #   the bits that are genuinely tool-specific
 └── sync.py              #   regenerates everything below
 
 AGENTS.md                # generated — Codex, Mistral Vibe, 20+ others
 CLAUDE.md                # generated — Claude Code (imports AGENTS.md)
 GEMINI.md                # generated — Gemini CLI (imports AGENTS.md)
+.geminiignore            # generated — keeps secrets out of Gemini's view
+.claude/settings.json    # generated — permissions + hook registration
+.claude/hooks/*          # generated — the deterministic guard + tracer
 .claude/agents/*.md      # generated — Claude Code native sub-agents
 .vibe/agents/*.toml      # generated — Mistral Vibe native sub-agents
+.agent/                  # runtime: PROGRESS.md (committed), trace.jsonl (ignored)
 ```
 
 ```bash
@@ -110,10 +155,29 @@ sub-agent definitions and the same structure works there.
 | Codex/Vibe ignore my `CODEX.md` / `MISTRAL.md` | Neither filename is read by anything. Both tools read `AGENTS.md`. |
 | Gemini loads `GEMINI.md` but not the roles | Run `/memory refresh`. Imports resolve at load time, max depth 5. |
 | `Python 3.11+ required` | `sync.py` uses stdlib `tomllib`. On 3.10, `pip install tomli`. |
+| Every tool call is blocked with "enforcement policy not found" | The guard fails **closed** on purpose. Run `python agents/sync.py`, or remove the hook from `.claude/settings.json`. |
+| The guard blocks something legitimate | Move the pattern from `[bash].deny` to `[bash].ask` in `agents/policy.toml`, regenerate. Don't disable the hook. |
+| Context feels bloated | `AGENTS.md` is 138 lines; role prompts load on demand. Anthropic warns above ~200 lines, and `@path` imports do **not** reduce context — they load at launch. |
+
+## Known gaps
+
+- **No project facts.** `AGENTS.md` is pure process — it does not tell an agent
+  your build or test commands. Run your tool's `/init` in the target repo and
+  merge the result into `agents/coordinator.md`.
+- **Enforcement is wired for Claude Code only.** Codex has execpolicy + sandbox,
+  Vibe has per-tool permissions, Gemini has a sandbox flag; `guard.py` is a plain
+  stdin→JSON script and ports to any of them, but that isn't done here.
+- **Least privilege for sub-agents** is expressed via `tools:` / `enabled_tools`,
+  which the tool honors. It is not enforced by the hook.
 
 ## Verify before trusting
 
-Tool names, frontmatter fields, and import syntax change. The `.vibe/*.toml`
-schema beyond `agent_type` / `description` is best-effort — check it against the
-current Mistral Vibe docs. When a tool stops picking something up, compare
-against its docs, fix the source in `agents/`, and regenerate.
+Tool names, frontmatter fields, hook schemas, and import syntax all change fast —
+sources already disagree on whether Claude Code has 27 or 30 hook lifecycle
+events. The `.vibe/*.toml` schema beyond `agent_type` / `description` is
+best-effort. When a tool stops picking something up, compare against its docs,
+fix the source in `agents/`, and regenerate.
+
+The hooks here were tested against simulated stdin payloads (36 guard cases), not
+against a live CLI. Run `agents/evals/golden-tasks.md` once on your machine
+before trusting the setup with anything irreversible.

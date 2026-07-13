@@ -1,0 +1,50 @@
+{
+  "budget": {
+    "max_tool_calls_per_session": 400,
+    "state_dir": ".agent"
+  },
+  "bash": {
+    "deny": [
+      "\\brm\\s+-\\S*[rf]\\S*\\s+\\*",
+      "\\brm\\b[^;&|]*\\s(/|~|\\$HOME)/?(\\s|$)",
+      "git\\s+push\\b.*--force(-with-lease)?\\b.*\\b(main|master)\\b",
+      "\\bgit\\s+reset\\s+--hard\\b.*\\borigin/",
+      "--no-verify",
+      "\\bchmod\\s+777\\b",
+      "\\b(DROP|TRUNCATE)\\s+(TABLE|DATABASE)\\b",
+      "\\bmkfs\\b|\\bdd\\s+if=.*of=/dev/",
+      "curl\\b[^|]*\\|\\s*(ba)?sh",
+      ">\\s*\\.env"
+    ],
+    "ask": [
+      "\\brm\\s+-\\S*[rf]",
+      "\\bgit\\s+push\\b",
+      "\\bgit\\s+reset\\s+--hard\\b",
+      "\\b(terraform|kubectl)\\s+(apply|delete)\\b",
+      "\\b(alembic|migrate|prisma)\\b.*\\b(up|deploy|reset)\\b",
+      "\\bnpm\\s+publish\\b|\\bpypi\\b|\\btwine\\s+upload\\b"
+    ]
+  },
+  "files": {
+    "protected": [
+      "(^|/)\\.env($|\\.)",
+      "(^|/)secrets?/",
+      "(^|/)\\.git/",
+      "(^|/)id_(rsa|ed25519)($|\\.)",
+      "\\.pem$|\\.key$|credentials(\\.json)?$"
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(./**/*.pem)",
+      "Read(./**/id_rsa)"
+    ],
+    "ask": [
+      "WebFetch",
+      "Bash(git push:*)"
+    ]
+  }
+}
