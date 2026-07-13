@@ -11,6 +11,11 @@ a subtask ("acting as the `evaluator` role from AGENTS.md, review this change").
 **Model steering:** pass `--model` when you start the CLI; the roles themselves
 are model-agnostic.
 
+**Enforcement:** `.geminiignore` keeps secrets out of the agent's view, but
+ignore files are advisory. For a hard block, run Gemini CLI with its sandbox
+enabled, or port `agents/hooks/guard.py` to Gemini's hook mechanism. The
+deterministic guard currently ships wired up for Claude Code only.
+
 **Note:** when both `GEMINI.md` and `AGENTS.md` exist in a directory, some Gemini
 surfaces prefer `GEMINI.md` — which is why this file imports the canonical one
 rather than competing with it. You can also point Gemini CLI straight at the

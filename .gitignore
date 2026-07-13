@@ -1,2 +1,7 @@
 __pycache__/
 *.pyc
+
+# Agent runtime state. PROGRESS.md is intentionally NOT ignored — it is the
+# handoff between context windows and belongs in the repo.
+.agent/trace.jsonl
+.agent/tool_calls.json
