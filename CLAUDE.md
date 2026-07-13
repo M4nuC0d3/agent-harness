@@ -16,7 +16,13 @@ sub-agents — all branching goes through you.
    Writes limited to the working directory, network to an allowlist, `~/.ssh`
    and `~/.aws` denied. `allowUnsandboxedCommands: false` closes the escape
    hatch that would otherwise let a failed command retry outside the boundary.
-   macOS uses Seatbelt; Linux/WSL2 need `bubblewrap` and `socat`.
+   macOS uses Seatbelt; Linux and WSL2 use `bubblewrap` + `socat`
+   (`sudo apt-get install bubblewrap socat`; on Ubuntu 24.04+ also add an
+   AppArmor profile so `bwrap` can create user namespaces). **WSL1 and native
+   Windows have no sandbox primitive — on Windows, run Claude Code inside
+   WSL2** (see the README's *Prerequisites: Windows + WSL*). Because
+   `allowUnsandboxedCommands: false`, a command that fails under the sandbox
+   cannot fall back to running unsandboxed.
 2. **Permission rules** — reliable for paths, domains and whole tools. Not for
    Bash *arguments*: those are string matches and are trivially evaded, which is
    why `curl`/`wget` are denied outright and fetching goes through

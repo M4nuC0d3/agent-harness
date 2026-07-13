@@ -15,6 +15,10 @@ Read these first; they are the ones that matter when context gets long.
    directory and reach only allowlisted domains. This holds even if a prompt
    injection gets past your judgment. You **cannot** retry outside it. If a
    sandboxed command fails, that is the boundary working: report it and ask.
+   (The guarantee needs a real OS sandbox: on Windows that means **WSL2** — the
+   mechanism and its prerequisites differ per tool; see the README's
+   *Prerequisites: Windows + WSL*. If you cannot confirm a sandbox is active,
+   say so rather than assuming the boundary holds.)
 2. **Permission rules.** Reads and writes of secrets are denied. `curl`, `wget`
    and `sudo` are denied — fetch through the allowlisted `WebFetch` domains.
    `git push`, `rm -rf`, `terraform` and `kubectl` prompt the human.

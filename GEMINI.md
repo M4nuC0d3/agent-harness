@@ -16,7 +16,14 @@ review this change"*. The YAML frontmatter in those files is for Claude Code;
 ignore it and read the prompt below it.
 
 **Enforcement:** `.geminiignore` keeps secrets out of view, but ignore files are
-advisory. For a hard block, run Gemini CLI with its sandbox enabled. The
+advisory. For a hard block, run Gemini CLI with its sandbox enabled — and note
+that its sandbox is **not** set up the way Claude Code's is. `sandbox-exec` only
+exists on macOS, so **under WSL2 the only real boundary is a container**: install
+Docker or Podman inside the distro and start Gemini with `GEMINI_SANDBOX=docker`
+(or `-s`, or `"sandbox": "docker"` in `settings.json`). With native Docker-in-WSL2
+(no Docker Desktop) you must enable `systemd` in `/etc/wsl.conf` and add your user
+to the `docker` group, or Gemini quietly falls back to **no sandbox**. WSL1 is not
+a supported baseline; see the README's *Prerequisites: Windows + WSL*. The
 deterministic guard in `.claude/hooks/` is wired for Claude Code only; it is a
 plain stdin→JSON script and ports easily.
 
