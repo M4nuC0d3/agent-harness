@@ -2,11 +2,11 @@
 
 A small, model-agnostic instruction layer. It turns whichever coding agent you
 use into a **coordinator** that plans, delegates to three focused roles, and
-refuses to accept work the **evaluator** hasn't passed.
+refuses to accept work the **evaluator** hasn't passed. Underneath it, a real
+enforcement layer stops the accidents that instructions alone cannot.
 
-There is no runtime here — no orchestrator to install, no API keys, no code to
-run. Just instructions your agent already knows how to read, generated from one
-source so they can't drift apart.
+No runtime, no orchestrator, no API keys, no build step. Just files your agent
+already knows how to read.
 
 ## Works with
 
@@ -15,169 +15,172 @@ source so they can't drift apart.
 | **Codex** (ChatGPT) | `AGENTS.md` | no — adopt the role inline |
 | **Claude Code** | `CLAUDE.md` → imports `AGENTS.md` | yes: `.claude/agents/*.md` |
 | **Gemini CLI** | `GEMINI.md` → imports `AGENTS.md` | no — adopt the role inline |
-| **Mistral Vibe** | `AGENTS.md` | yes: `.vibe/agents/*.toml` |
+| **Mistral Vibe** | `AGENTS.md` | yes, but not wired here (see Known gaps) |
 | **Cursor, Copilot, Aider, Zed, Jules, …** | `AGENTS.md` | varies |
 
 `AGENTS.md` is an open format stewarded by the Agentic AI Foundation and read by
-20+ agents. Everything else either imports it or is generated from the same
-source.
+20+ agents. Everything else imports it.
 
-## Install (60 seconds, nothing to install)
+## Install
 
 Copy into the root of the project you want to work in:
 
 ```bash
-cp -r agents/ AGENTS.md CLAUDE.md GEMINI.md .geminiignore .claude/ .vibe/ /path/to/your-project/
+cp -r AGENTS.md CLAUDE.md GEMINI.md .geminiignore .claude/ evals/ /path/to/your-project/
 ```
 
-Then start your agent (`claude`, `codex`, `gemini`, `vibe`) in that directory and
-give it a real goal:
+Then start your agent (`claude`, `codex`, `gemini`, `vibe`) there and give it a
+real goal:
 
 > Add pagination to the `/users` endpoint, with tests.
 
-It will plan first, delegate to `researcher` → `implementer` → `evaluator`, and
-pause for your approval before anything irreversible.
+It plans first, delegates `researcher` → `implementer` → `evaluator`, and pauses
+for your approval before anything irreversible.
 
-If your project already has an `AGENTS.md` or `CLAUDE.md`, merge rather than
-overwrite: move your content into `agents/coordinator.md` first.
+Already have an `AGENTS.md`? Merge — don't overwrite. Keep your project's build
+commands and conventions; add the sections you want from this one.
 
-## What you get
+## No generator, no drift
 
-- **A plan first.** The agent states the subtasks before touching anything.
-- **A critic.** Nothing is accepted until `evaluator` returns PASS. Max 2
-  revisions, then it escalates to you.
-- **Human checkpoints.** Plan approval; before deletes, force-push, migrations;
-  on repeated failure; and a final review.
-- **Small contexts.** Each role gets a scoped brief and returns a distilled
-  summary, so the coordinator's context fills with conclusions, not transcripts.
-- **Enforcement, not just instructions.** A `PreToolUse` hook denies `rm -rf ~`,
-  force-push to main, and writes to `.env` — deterministically, even in
-  `--dangerously-skip-permissions` mode. It also enforces a per-session
-  tool-call ceiling, so a runaway loop stops itself.
-- **An audit trail.** Every tool call lands in `.agent/trace.jsonl`.
-- **Long runs.** `.agent/PROGRESS.md` plus commits at evaluator-green checkpoints
-  let a fresh context window pick the work back up.
+Every piece of content exists **exactly once**, in the format the tool actually
+reads. There is nothing to regenerate and nothing to keep in sync:
+
+```
+AGENTS.md                 the canonical instructions — the only copy
+CLAUDE.md                 3 lines + Claude specifics; imports AGENTS.md
+GEMINI.md                 3 lines + Gemini specifics; imports AGENTS.md
+.claude/agents/*.md       the three role prompts — the only copy
+                          (YAML frontmatter for Claude Code; other tools read past it)
+.claude/settings.json     sandbox + permission rules + hook registration
+.claude/hooks/guard.py    session budget + opt-in accident catcher (config at the top)
+.claude/hooks/trace.py    audit trail
+.claude/hooks/test_*.py   the tests below
+.geminiignore             keeps secrets out of Gemini's view
+managed-settings.example.json   org-wide lockdown (deployed outside the repo)
+evals/golden-tasks.md     does this setup actually work?
+.agent/                   runtime: PROGRESS.md (committed), trace.jsonl (ignored)
+```
+
+An earlier version of this repo generated `CLAUDE.md`, `GEMINI.md` and the role
+files from a shared source. That solved duplication by adding a build step —
+and a build step for four markdown files is worse than the problem. Anthropic's
+own advice applies to tooling as much as to agents: find the simplest thing that
+works. Imports cover Claude Code and Gemini; Codex reads the canonical file
+directly; the role prompts live where Claude Code wants them anyway.
 
 ## Instructions vs. enforcement
 
-`AGENTS.md` is *context*: it lowers the **probability** of an accident. Hooks and
-permission rules lower the **possibility**. Both matter, and it's worth knowing
-which is which:
+`AGENTS.md` is *context*: it lowers the **probability** of an accident. The
+sandbox and permission rules lower the **possibility**. Layered as Anthropic
+documents it:
 
 | Layer | Mechanism | Guarantee |
 |---|---|---|
-| `AGENTS.md`, role prompts | context the model reads | probabilistic |
-| `.claude/settings.json` permissions | declarative allow/ask/deny | deterministic, pattern-level |
-| `.claude/hooks/guard.py` (PreToolUse) | your code sees the real command | deterministic; holds in bypass mode |
-| `.claude/hooks/trace.py` (PostToolUse) | appends `.agent/trace.jsonl` | runs on every call |
+| Container / worktree | blast radius | strongest, for untrusted code |
+| **Sandbox** | OS-level isolation of Bash *and its children* | holds even when a prompt injection bypasses the model |
+| **Permission rules** | declarative allow / ask / deny | reliable for paths, domains, tools |
+| **Hooks** | your code, before the permission check | only what rules can't express |
+| `AGENTS.md` | context the model reads | probabilistic |
 
-Everything above is generated from **`agents/policy.toml`**. Change the policy,
-not the generated files. Test the guard without a model in the loop:
+Concretely, `.claude/settings.json` enables the sandbox with
+`allowUnsandboxedCommands: false` — closing the escape hatch that would let a
+failed command retry outside the boundary — denies reads of `~/.ssh` and
+`~/.aws`, and restricts network egress to an allowlist. Permission rules deny
+secrets, `curl`, `wget` and `sudo`, gate `WebFetch` behind a domain allowlist,
+and prompt on `git push`, `rm -rf`, `terraform`, `kubectl`.
+
+**Bash patterns are not a security control.** Arguments can be reordered,
+variables expanded, wrappers used. That is why the guard's denylist is labelled
+an *accident catcher* (`ACCIDENT_CATCHER = False` disables it) and why `curl` is
+denied outright rather than pattern-matched. The hook exists for the two things
+rules cannot do: count tool calls per session, and write an audit trace.
+
+Test both without a model in the loop:
 
 ```bash
-python agents/hooks/test_guard.py agents/hooks/guard.py   # 36 cases
+python .claude/hooks/test_guard.py  .claude/hooks/guard.py     # 24 behavioural cases
+python .claude/hooks/test_policy.py .claude/settings.json      # sandbox + rules present
 ```
 
 The guard denies only catastrophic targets (`rm -rf /`, `~`, `$HOME`, `*`) and
-*asks* for everyday recursive deletes like `rm -rf node_modules`. A guard that
-blocks real work gets switched off, and then it protects nothing.
+*asks* for everyday deletes like `rm -rf node_modules`. A guard that blocks real
+work gets switched off, and then it protects nothing.
 
 ## Evals
 
-`--check` proves the files are in sync; it says nothing about whether they work.
-`agents/evals/golden-tasks.md` holds six behavioural tasks — does it plan first,
-does the evaluator actually gate, does it resist prompt injection, does the hook
-hold when the model is wrong. Run them in a scratch repo and score Pass/Fail.
-
-## One source, many tools
-
-```
-agents/                  ← EDIT ONLY HERE
-├── coordinator.md       #   shared coordinator instructions (model-agnostic)
-├── roles/*.md           #   researcher / implementer / evaluator prompts
-├── roles.toml           #   per-role description + per-vendor tools/model
-├── policy.toml          #   the enforcement policy (deny / ask / budget)
-├── hooks/               #   guard.py, trace.py + their test matrix
-├── evals/               #   golden tasks: does the setup actually work?
-├── vendor/*.md          #   the bits that are genuinely tool-specific
-└── sync.py              #   regenerates everything below
-
-AGENTS.md                # generated — Codex, Mistral Vibe, 20+ others
-CLAUDE.md                # generated — Claude Code (imports AGENTS.md)
-GEMINI.md                # generated — Gemini CLI (imports AGENTS.md)
-.geminiignore            # generated — keeps secrets out of Gemini's view
-.claude/settings.json    # generated — permissions + hook registration
-.claude/hooks/*          # generated — the deterministic guard + tracer
-.claude/agents/*.md      # generated — Claude Code native sub-agents
-.vibe/agents/*.toml      # generated — Mistral Vibe native sub-agents
-.agent/                  # runtime: PROGRESS.md (committed), trace.jsonl (ignored)
-```
-
-```bash
-python agents/sync.py          # regenerate
-python agents/sync.py --check  # CI gate: fails if a generated file is stale
-```
-
-No dependencies — `sync.py` uses only the standard library (Python 3.11+).
-Details in `agents/README.md`.
+Tests prove the hook behaves. They say nothing about whether the *instructions*
+work. `evals/golden-tasks.md` holds six behavioural tasks: does it plan first,
+does the evaluator actually gate, does it resist prompt injection, does the
+sandbox hold when the model is wrong. Run them in a scratch repo, score
+Pass/Fail, and add a task every time you hit a real failure.
 
 ## Choosing the model per role
 
-The roles are model-agnostic. Where a tool lets you pin a model, it's a field in
-`agents/roles.toml`:
+The roles are model-agnostic. Where a tool lets you pin a model it is the
+`model:` field in the sub-agent's frontmatter:
 
-```toml
-[roles.evaluator.claude]
-model = "opus"     # judgment → strongest
+```yaml
+---
+name: evaluator
+model: opus      # judgment → strongest
+---
 ```
 
-Convention: judgment → strongest, implementation → balanced, search → fast/cheap.
-For Claude Code you can also cap everything at once with
-`CLAUDE_CODE_SUBAGENT_MODEL=haiku`. Other CLIs take a `--model` flag at startup.
+Convention: judgment → strongest, implementation → balanced, search →
+fast/cheap. Claude Code can cap everything at once with
+`CLAUDE_CODE_SUBAGENT_MODEL=haiku`. Other CLIs take `--model` at startup.
 
 ## Going programmatic
 
-For unattended runs (CI, pipelines, products), use the vendor's agent SDK rather
+For unattended runs (CI, pipelines, products) use the vendor's agent SDK rather
 than hand-writing an orchestrator: **Claude Agent SDK**, **OpenAI Agents SDK**,
-or **Google ADK**. Each ships the agent loop, tool execution, sub-agents, and
-permission hooks that you would otherwise rebuild.
+**Google ADK**. Each ships the agent loop, tool execution, sub-agents and
+permission hooks you would otherwise rebuild. The role prompts here are plain
+markdown and drop straight into their sub-agent definitions.
 
-The roles in `agents/roles/` are plain prompts — paste them into an SDK's
-sub-agent definitions and the same structure works there.
+## Monorepos
+
+The **closest** `AGENTS.md` wins. Keep this root file to what applies
+everywhere, and put package-specific build commands, framework conventions and
+local anti-patterns in a nested `AGENTS.md` inside that package. Nested files
+keep the root small, which is what keeps it read.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | `/agents` doesn't list the sub-agents | You edited files on disk — restart the Claude Code session. Agents created via `/agents` apply immediately. |
-| The agent ignores `AGENTS.md` / `CLAUDE.md` | It must be in the directory you launched from (or a parent). In Claude Code check with `/memory`; in Gemini CLI with `/memory show`. |
-| Edited `CLAUDE.md` and it got overwritten | It's generated. Edit `agents/coordinator.md` (or `agents/vendor/claude.md`) and run `python agents/sync.py`. |
+| The agent ignores `AGENTS.md` / `CLAUDE.md` | It must be in the directory you launched from (or a parent). Check with `/memory` (Claude Code) or `/memory show` (Gemini CLI). |
 | Codex/Vibe ignore my `CODEX.md` / `MISTRAL.md` | Neither filename is read by anything. Both tools read `AGENTS.md`. |
-| Gemini loads `GEMINI.md` but not the roles | Run `/memory refresh`. Imports resolve at load time, max depth 5. |
-| `Python 3.11+ required` | `sync.py` uses stdlib `tomllib`. On 3.10, `pip install tomli`. |
-| Every tool call is blocked with "enforcement policy not found" | The guard fails **closed** on purpose. Run `python agents/sync.py`, or remove the hook from `.claude/settings.json`. |
-| The guard blocks something legitimate | Move the pattern from `[bash].deny` to `[bash].ask` in `agents/policy.toml`, regenerate. Don't disable the hook. |
-| Context feels bloated | `AGENTS.md` is 138 lines; role prompts load on demand. Anthropic warns above ~200 lines, and `@path` imports do **not** reduce context — they load at launch. |
+| Gemini loads `GEMINI.md` but not the rest | Run `/memory refresh`. Imports resolve at load time, max depth 5. |
+| Sandbox won't start on Linux/WSL2 | Install `bubblewrap` and `socat`. Native Windows and WSL1 are unsupported — use a container. |
+| Heredocs (`<< EOF`) fail | A known sandbox limitation: the shell needs a temp file. Write the file, then run it. |
+| The guard blocks something legitimate | Move it out of `ACCIDENT_PATTERNS` and add a `Bash(...)` **ask** rule in `.claude/settings.json`. Don't disable the sandbox. |
+| Context feels bloated | `AGENTS.md` is 145 lines; Claude Code sees 184. Anthropic warns above ~200, and `@path` imports do **not** reduce context — they load at launch. |
 
 ## Known gaps
 
-- **No project facts.** `AGENTS.md` is pure process — it does not tell an agent
-  your build or test commands. Run your tool's `/init` in the target repo and
-  merge the result into `agents/coordinator.md`.
-- **Enforcement is wired for Claude Code only.** Codex has execpolicy + sandbox,
-  Vibe has per-tool permissions, Gemini has a sandbox flag; `guard.py` is a plain
-  stdin→JSON script and ports to any of them, but that isn't done here.
-- **Least privilege for sub-agents** is expressed via `tools:` / `enabled_tools`,
-  which the tool honors. It is not enforced by the hook.
+- **No project facts.** This layer is pure process — it does not know your build
+  or test commands, which is the single highest-ROI section of an `AGENTS.md`.
+  Run your tool's `/init` in the target repo and merge the result in.
+- **Enforcement is wired for Claude Code only.** Codex has execpolicy and a
+  sandbox, Gemini CLI has a sandbox flag, Vibe has per-tool permissions.
+  `guard.py` is a plain stdin→JSON script and ports to any of them.
+- **Mistral Vibe sub-agents are not shipped.** An earlier version generated
+  `.vibe/agents/*.toml`, but the schema beyond `agent_type`/`description` was
+  never verified against a live CLI, so it was removed rather than shipped
+  broken. Vibe reads `AGENTS.md` and adopts roles inline.
 
 ## Verify before trusting
 
-Tool names, frontmatter fields, hook schemas, and import syntax all change fast —
-sources already disagree on whether Claude Code has 27 or 30 hook lifecycle
-events. The `.vibe/*.toml` schema beyond `agent_type` / `description` is
-best-effort. When a tool stops picking something up, compare against its docs,
-fix the source in `agents/`, and regenerate.
+Hook schemas, frontmatter fields and import syntax move fast — published sources
+already disagree on whether Claude Code exposes 27 or 30 hook lifecycle events.
+Exit-code semantics have a real footgun: exit 1 blocks nothing, exit 2 blocks,
+and mixing exit 2 with JSON on stdout silently discards the JSON.
 
-The hooks here were tested against simulated stdin payloads (36 guard cases), not
-against a live CLI. Run `agents/evals/golden-tasks.md` once on your machine
-before trusting the setup with anything irreversible.
+The hooks here were tested against simulated stdin payloads, not a live CLI. The
+sandbox settings were written against Anthropic's own example config but never
+executed. Reported caveats worth knowing: the sandbox can fail open if it cannot
+start, and its network filter does not inspect TLS, so domain fronting is
+possible. Run `evals/golden-tasks.md` on your machine before trusting this setup
+with anything irreversible.
