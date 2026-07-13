@@ -1,83 +1,144 @@
-# Enforcement policy — the deterministic layer.
+# Enforcement policy — layered the way Anthropic documents it.
 #
-# AGENTS.md is *context*: it lowers the probability of an accident. This file
-# lowers the *possibility*. `agents/sync.py` renders it into
-# `.claude/settings.json` (declarative permission rules) and
-# `.claude/hooks/policy.json` (read by the PreToolUse hook, which runs before
-# the permission check and can block even in bypass mode).
+#   1. Sandbox      OS-level isolation of Bash *and its child processes*.
+#                   Holds even if a prompt injection bypasses the model's
+#                   decision-making. This is the security boundary.
+#   2. Permissions  Declarative allow/ask/deny. Reliable for paths, domains and
+#                   whole tools. Fragile for Bash *arguments* — do not rely on
+#                   them to constrain what a command does.
+#   3. Hook         Only what rules cannot express: a session budget, and (opt-in)
+#                   an accident-catcher for obviously destructive commands.
 #
-# Rule of thumb: use permission rules for anything a pattern can express; use
-# the hook when the decision needs logic, state, or the expanded command.
+# `agents/sync.py` renders this into .claude/settings.json and
+# .claude/hooks/policy.json. Verify the schema against
+# https://code.claude.com/docs/en/sandboxing — it evolves.
 
 # ---------------------------------------------------------------------------
-[budget]
-# Deterministic stop condition. The hook counts tool calls per session and
-# denies further calls past this ceiling — the harness cannot loop forever,
-# regardless of what the model decides. 0 disables the ceiling.
-max_tool_calls_per_session = 400
+# 1. SANDBOX — the boundary.
+#
+# Defaults inside the sandbox: writes only to the working directory and the
+# session temp dir; no network domains pre-allowed. Deny-listing dangerous
+# commands is a losing game; removing the ability to do damage is not.
+#
+# Requires: macOS (Seatbelt) out of the box; Linux/WSL2 need `bubblewrap` and
+# `socat`. Native Windows and WSL1 are unsupported — there, fall back to a
+# container. Run `/sandbox` in a session to inspect the resolved config.
+[sandbox]
+enabled = true
 
-# Where the hook keeps its per-session counters and the audit trail.
+# false => sandboxed commands still go through the normal permission prompts.
+# Set true once your allowlists are settled: the OS boundary then replaces the
+# prompt, which is what makes the setup fast instead of prompt-fatiguing.
+autoAllowBashIfSandboxed = false
+
+# THE important one. Left at its default (true), Claude may retry a command that
+# failed under the sandbox *outside* the sandbox — it treats the boundary as an
+# obstacle to route around. false disables the `dangerouslyDisableSandbox`
+# escape hatch entirely.
+allowUnsandboxedCommands = false
+
+# Refuse to sandbox nothing: commands that genuinely cannot be wrapped.
+excludedCommands = []
+
+# Sandboxing within an already-sandboxed environment (e.g. a dev container).
+enableWeakerNestedSandbox = false
+
+[sandbox.network]
+# No domains are pre-allowed. Everything else is blocked; first use prompts.
+# Note the built-in proxy enforces the allowlist on the requested hostname and
+# does NOT terminate or inspect TLS — a determined exfiltrator can domain-front.
+# For a real network boundary, front the sandbox with an inspecting proxy.
+allowedDomains = [
+  "registry.npmjs.org",
+  "*.npmjs.org",
+  "pypi.org",
+  "*.pythonhosted.org",
+  "crates.io",
+  "github.com",
+  "*.githubusercontent.com",
+]
+allowUnixSockets = []
+allowAllUnixSockets = false     # /var/run/docker.sock == host access. Don't.
+allowLocalBinding = false
+
+[sandbox.filesystem]
+# The sandbox's default read policy still exposes your credentials. Deny them.
+denyRead = ["~/.ssh", "~/.aws", "~/.config/gh", "~/.netrc", "~/.gnupg", "~/.docker"]
+# Extra write paths beyond the working directory (package caches, etc.).
+allowWrite = []
+
+# ---------------------------------------------------------------------------
+# 2. PERMISSIONS — declarative. Deny beats allow at every settings scope.
+#
+# Path rules are reliable. They cover Claude's own file tools and the file
+# commands it recognises in Bash (cat, head, sed) — but NOT an arbitrary
+# subprocess that opens the file itself. That gap is what the sandbox closes.
+[permissions]
+deny = [
+  # secrets, at the tool layer; mirrored by sandbox.filesystem.denyRead
+  "Read(./.env)",
+  "Read(./.env.*)",
+  "Read(./secrets/**)",
+  "Read(**/*.pem)",
+  "Read(**/*.key)",
+  "Read(**/*credentials*)",
+  "Edit(./.env)",
+  "Edit(./.env.*)",
+  "Edit(./secrets/**)",
+  # network tools in Bash: pattern-matching URLs is unreliable, so block the
+  # tools and route fetching through WebFetch's domain rules instead.
+  "Bash(curl:*)",
+  "Bash(wget:*)",
+  "Bash(sudo:*)",
+  # deny-all for fetching; the allow list below re-opens specific domains
+  "WebFetch(domain:*)",
+]
+
+ask = [
+  "Bash(git push:*)",
+  "Bash(git reset --hard:*)",
+  "Bash(rm -rf:*)",
+  "Bash(terraform:*)",
+  "Bash(kubectl:*)",
+  "Bash(npm publish:*)",
+]
+
+allow = [
+  "WebFetch(domain:github.com)",
+  "WebFetch(domain:raw.githubusercontent.com)",
+  "WebFetch(domain:docs.claude.com)",
+]
+
+# ---------------------------------------------------------------------------
+# 3. HOOK — only what the layers above cannot express.
+[budget]
+# A stop condition the model cannot ignore: the PreToolUse hook counts tool
+# calls per session and denies further calls past this ceiling. Not expressible
+# as a permission rule. 0 disables.
+max_tool_calls_per_session = 400
 state_dir = ".agent"
 
-# ---------------------------------------------------------------------------
 [bash]
-# Denied outright by the hook (regex, case-insensitive, matched against the
-# command string the model is about to run).
+# OPT-IN ACCIDENT CATCHER — *not* a security mechanism.
 #
-# Note on `rm`: a blanket deny on `rm -rf` would block `rm -rf node_modules`,
-# and a guard that blocks everyday work gets switched off — at which point it
-# protects nothing. So: deny only catastrophic targets (/, ~, $HOME, bare *),
-# and *ask* for every other recursive rm (see [bash].ask below).
+# This is regex over the command string, and it has exactly the weakness the
+# Claude Code docs call out for Bash permission patterns: arguments can be
+# reordered, variables expanded, wrappers used. `devbox run rm -rf ~`,
+# `python -c "shutil.rmtree(...)"` and `eval "$(...)"` all walk straight past it.
+# It catches the model fat-fingering something obvious. It does not stop an
+# adversary, and it must never be the reason you skip the sandbox.
+#
+# Set enabled = false if you have the sandbox and prefer fewer moving parts.
+enabled = true
+
 deny = [
   '\brm\s+-\S*[rf]\S*\s+\*',                 # rm -rf *
-  '\brm\b[^;&|]*\s(/|~|\$HOME)/?(\s|$)',     # any rm whose target is / or ~ or $HOME
+  '\brm\b[^;&|]*\s(/|~|\$HOME)/?(\s|$)',     # rm whose target is / or ~ or $HOME
   'git\s+push\b.*--force(-with-lease)?\b.*\b(main|master)\b',
-  '\bgit\s+reset\s+--hard\b.*\borigin/',
   '--no-verify',                             # skipping hooks/CI checks
   '\bchmod\s+777\b',
   '\b(DROP|TRUNCATE)\s+(TABLE|DATABASE)\b',
   '\bmkfs\b|\bdd\s+if=.*of=/dev/',
   'curl\b[^|]*\|\s*(ba)?sh',                 # curl | sh
   '>\s*\.env',                               # clobbering secrets
-]
-
-# Prompt the human instead of blocking (irreversible, but sometimes intended).
-ask = [
-  '\brm\s+-\S*[rf]',                         # any other recursive/forced rm
-  '\bgit\s+push\b',
-  '\bgit\s+reset\s+--hard\b',
-  '\b(terraform|kubectl)\s+(apply|delete)\b',
-  '\b(alembic|migrate|prisma)\b.*\b(up|deploy|reset)\b',
-  '\bnpm\s+publish\b|\bpypi\b|\btwine\s+upload\b',
-]
-
-# ---------------------------------------------------------------------------
-[files]
-# The hook blocks Write/Edit to these; permission `deny` rules block Read.
-# Note: a PreToolUse hook is the only reliable block — permission rules and
-# ignore files can be worked around by indexing and other read paths.
-protected = [
-  '(^|/)\.env($|\.)',
-  '(^|/)secrets?/',
-  '(^|/)\.git/',
-  '(^|/)id_(rsa|ed25519)($|\.)',
-  '\.pem$|\.key$|credentials(\.json)?$',
-]
-
-# ---------------------------------------------------------------------------
-[permissions]
-# Rendered verbatim into .claude/settings.json. Verify the rule syntax against
-# the current Claude Code settings docs — it evolves.
-deny = [
-  "Read(./.env)",
-  "Read(./.env.*)",
-  "Read(./secrets/**)",
-  "Read(./**/*.pem)",
-  "Read(./**/id_rsa)",
-]
-# Untrusted content enters the loop here (see AGENTS.md, "Untrusted content"),
-# so a human sees the domain before it is fetched.
-ask = [
-  "WebFetch",
-  "Bash(git push:*)",
 ]

@@ -192,28 +192,43 @@ def render_vibe_agent(name: str, r: dict) -> str:
 # Verify the settings schema against the current Claude Code docs — it evolves.
 # --------------------------------------------------------------------------
 def render_claude_settings(policy: dict) -> str:
+    """Sandbox + permission rules + hook registration.
+
+    Schema mirrors Anthropic's own example at
+    anthropics/claude-code/examples/settings/settings-bash-sandbox.json.
+    """
     perms = policy.get("permissions", {})
+    sb = policy.get("sandbox", {})
     settings = {
         "$schema": "https://json.schemastore.org/claude-code-settings.json",
+        # 1. The boundary. Holds even when a prompt injection bypasses the model.
+        "sandbox": {
+            "enabled": sb.get("enabled", True),
+            "autoAllowBashIfSandboxed": sb.get("autoAllowBashIfSandboxed", False),
+            "allowUnsandboxedCommands": sb.get("allowUnsandboxedCommands", False),
+            "excludedCommands": sb.get("excludedCommands", []),
+            "enableWeakerNestedSandbox": sb.get("enableWeakerNestedSandbox", False),
+            "network": sb.get("network", {}),
+            "filesystem": sb.get("filesystem", {}),
+        },
+        # 2. Declarative rules. Deny beats allow at every scope.
         "permissions": {
             "deny": perms.get("deny", []),
             "ask": perms.get("ask", []),
+            "allow": perms.get("allow", []),
         },
+        # 3. Only what the layers above cannot express.
         "hooks": {
             "PreToolUse": [
                 {
-                    "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
-                    "hooks": [
-                        {"type": "command", "command": "python3 .claude/hooks/guard.py"}
-                    ],
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": "python3 .claude/hooks/guard.py"}],
                 }
             ],
             "PostToolUse": [
                 {
                     "matcher": "*",
-                    "hooks": [
-                        {"type": "command", "command": "python3 .claude/hooks/trace.py"}
-                    ],
+                    "hooks": [{"type": "command", "command": "python3 .claude/hooks/trace.py"}],
                 }
             ],
         },
@@ -224,6 +239,22 @@ def render_claude_settings(policy: dict) -> str:
 def render_policy_json(policy: dict) -> str:
     """Machine-readable policy read by guard.py at runtime."""
     return json.dumps(policy, indent=2) + "\n"
+
+
+def render_managed_settings() -> str:
+    """Org-level lockdown. Lives OUTSIDE the repo (a system path requiring admin
+    rights), so this is a reference copy, not something a project can self-apply.
+    A deny in managed settings cannot be overridden by any lower scope."""
+    return json.dumps(
+        {
+            "_comment": "Deploy to the managed-settings path for your OS. Not read from a repo.",
+            "permissions": {"disableBypassPermissionsMode": "disable"},
+            "allowManagedPermissionRulesOnly": True,
+            "allowManagedHooksOnly": True,
+            "sandbox": {"enabled": True, "allowUnsandboxedCommands": False},
+        },
+        indent=2,
+    ) + "\n"
 
 
 def render_geminiignore() -> str:
@@ -249,6 +280,7 @@ def build(meta: dict) -> dict[Path, str]:
         ROOT / ".claude" / "hooks" / "guard.py": read(HERE / "hooks" / "guard.py") + "\n",
         ROOT / ".claude" / "hooks" / "trace.py": read(HERE / "hooks" / "trace.py") + "\n",
         ROOT / ".geminiignore": render_geminiignore(),
+        ROOT / "managed-settings.example.json": render_managed_settings(),
     }
     for name in meta["order"]:
         r = meta["roles"][name]
