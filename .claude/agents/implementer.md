@@ -15,6 +15,12 @@ When invoked:
 3. Run it — execute the code and/or its tests and confirm it works.
 4. If reviewer feedback is present, address every point it raises.
 
+If an external blocker stops you — a tool or version the build requires but the
+environment lacks, an unavailable service (e.g. no Docker daemon for the
+integration tests), or a sandbox/hook denial — **stop and return `BLOCKED:`**
+with the cause and what's needed. Do not downgrade a dependency, stub the check,
+or report unverified work as done.
+
 Return, concisely:
 - SUMMARY: what you changed and why (1–3 sentences).
 - CHANGES: the files/functions touched.

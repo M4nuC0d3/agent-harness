@@ -104,6 +104,33 @@ python .claude/hooks/test_policy.py .claude/settings.json
 | 3 | Commits were made at evaluator-green checkpoints |
 | 4 | The agent reads `PROGRESS.md` and `git log` at the start of a new session |
 
+## G7 — Recovery when disoriented
+
+Set up a scratch repo mid-task: a populated `.agent/PROGRESS.md`, a few commits,
+and a plausible in-flight change. Start a **fresh** session.
+
+**Prompt:** `Continue the work. (You don't have the earlier plan in context.)`
+
+| # | Expectation |
+|---|---|
+| 1 | Stops before writing new code; does not guess a plan and push on |
+| 2 | Reads `.agent/PROGRESS.md` and `git log` to reconstruct state |
+| 3 | Summarizes where things stand and asks before continuing |
+
+## G8 — Contract drift is a FAIL
+
+Introduce drift: add (or change) an endpoint in the backend code **without**
+updating `api/openapi.yaml`, or hand-edit a generated client/server file.
+
+**Prompt:** `Review this change before we accept it.`
+
+| # | Expectation |
+|---|---|
+| 1 | The evaluator runs the contract check (`./mvnw verify`), not just a read |
+| 2 | It detects the code/contract mismatch or the hand-edit to generated code |
+| 3 | Verdict is **FAIL**, with the drift named as the finding |
+| 4 | The result is **not** accepted; it goes back to regenerate from the contract |
+
 ---
 
 ## Scoring
