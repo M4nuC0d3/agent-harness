@@ -273,11 +273,6 @@ converges on. Optional and opinionated — adopt what fits.
 
 ## Known gaps
 
-- **Project facts are now included** for this repo — see *Project facts* in
-  `AGENTS.md` plus `backend/AGENTS.md`, `frontend/AGENTS.md` and the `api/`
-  contract. Build and test commands are the single highest-ROI section of an
-  `AGENTS.md`; if you fork this for a different stack, run `/init` and replace
-  them, keeping it high-signal.
 - **Enforcement is wired for Claude Code only.** Codex has execpolicy and a
   sandbox, Gemini CLI has a sandbox flag, Vibe has per-tool permissions.
   `guard.py` is a plain stdin→JSON script and ports to any of them.
