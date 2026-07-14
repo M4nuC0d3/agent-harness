@@ -26,6 +26,13 @@ Contract:
   * exit 0 + stdout JSON -> structured decision
   Never mix: on exit 2 stdout JSON is ignored, and exit 1 blocks nothing.
 
+Portability: this same script is wired into Claude Code (PreToolUse), Codex
+(PreToolUse — identical stdin fields and exit-2-blocks semantics) and Cursor
+(beforeShellExecution — the command sits at top-level `command`, and exit 2 also
+blocks). `extract_command` reads both shapes, and exit 2 + stderr is the one
+blocking signal all three honor, so there is a single copy — see
+`.codex/hooks.json`, `.cursor/hooks.json`, and docs/porting-enforcement.md.
+
 Stdlib only. Config is right here — no second file to keep in sync.
 """
 from __future__ import annotations
@@ -62,6 +69,17 @@ ACCIDENT_PATTERNS = [
 ]
 
 # ───────────────────────────────────────────────────────────────────────────
+
+
+def extract_command(event: dict) -> str:
+    """The shell command, wherever the tool puts it.
+
+    Claude Code / Codex: {"tool_name": "Bash", "tool_input": {"command": ...}}.
+    Cursor beforeShellExecution: {"command": ..., "cwd": ..., "sandbox": ...}.
+    A non-shell event (a file write, an MCP call) has no command here -> "".
+    """
+    tool_input = event.get("tool_input") or {}
+    return str(tool_input.get("command") or event.get("command") or "")
 
 
 def block(reason: str) -> None:
@@ -103,10 +121,13 @@ def check_budget(session_id: str) -> None:
         )
 
 
-def check_accidents(tool: str, tool_input: dict) -> None:
-    if not ACCIDENT_CATCHER or tool != "Bash":
+def check_accidents(cmd: str) -> None:
+    # Runs whenever there is a command to inspect. Tool name is unreliable across
+    # tools (Cursor's shell hook sends none), but only shell execs carry a
+    # command, so a non-empty `cmd` is the signal — file writes and MCP calls
+    # land here with cmd == "" and fall through untouched.
+    if not ACCIDENT_CATCHER or not cmd:
         return
-    cmd = str(tool_input.get("command", ""))
     for pattern in ACCIDENT_PATTERNS:
         if re.search(pattern, cmd, re.IGNORECASE):
             block(
@@ -122,7 +143,7 @@ def main() -> None:
         allow_silently()
 
     check_budget(str(event.get("session_id", "")))
-    check_accidents(event.get("tool_name", ""), event.get("tool_input", {}) or {})
+    check_accidents(extract_command(event))
     allow_silently()
 
 
