@@ -38,10 +38,15 @@ def main():
     except Exception:
         return 0
 
-    if payload.get("tool_name") not in ("Write", "Edit", "MultiEdit"):
+    # Wired for Claude Code (Write|Edit|MultiEdit) and Cursor (afterFileEdit,
+    # which sends no tool_name). Codex has no file-write hooks, so it never
+    # reaches here — Spotless/Prettier in the build cover that path.
+    tool = payload.get("tool_name")
+    if tool and tool not in ("Write", "Edit", "MultiEdit"):
         return 0
 
-    path = (payload.get("tool_input") or {}).get("file_path")
+    ti = payload.get("tool_input") or {}
+    path = ti.get("file_path") or payload.get("file_path") or payload.get("path")
     if not path or not os.path.isfile(path):
         return 0
 

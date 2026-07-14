@@ -26,11 +26,13 @@ already knows how to read.
 Copy into the root of the project you want to work in:
 
 ```bash
-cp -r AGENTS.md CLAUDE.md GEMINI.md .geminiignore .claude/ evals/ /path/to/your-project/
+cp -r AGENTS.md CLAUDE.md GEMINI.md .geminiignore \
+      .claude/ .codex/ .cursor/ docs/ evals/ /path/to/your-project/
 ```
 
-Then start your agent (`claude`, `codex`, `gemini`, `vibe`) there and give it a
-real goal:
+`.codex/` and `.cursor/` wire the same enforcement into Codex and Cursor; drop
+them if you only use Claude Code. Then start your agent (`claude`, `codex`,
+`gemini`, `cursor`, …) there and give it a real goal:
 
 > Add pagination to the `/users` endpoint, with tests.
 
@@ -38,13 +40,15 @@ It plans first, delegates `researcher` → `implementer` → `evaluator`, and pa
 for your approval before anything irreversible.
 
 **Requirements.** Each CLI installs itself (`claude`, `codex`, `gemini`, …). The
-only *extra* dependency is **Python 3**: the two hooks run as
-`python3 .claude/hooks/guard.py` / `trace.py`. They're stdlib-only, so any Python
-3 works — but if `python3` isn't on `PATH` they don't fail loudly, they silently
-no-op, and an absent `PreToolUse` hook blocks nothing (see *Verify before
-trusting*). That quietly drops the session budget, the accident catcher **and**
-the audit trace — the whole hook layer — while the sandbox and permission rules
-stay up. Run `python3 --version` before you rely on enforcement.
+only *extra* dependency is **Python 3**: the hooks run as
+`python3 .claude/hooks/{preflight,guard,trace}.py`. They're stdlib-only and
+shared across Claude Code, Codex and Cursor (one copy each — see
+`docs/porting-enforcement.md`), so any Python 3 works — but if `python3` isn't on
+`PATH` they don't fail loudly, they silently no-op, and an absent `PreToolUse`
+hook blocks nothing (see *Verify before trusting*). That quietly drops the
+session budget, the accident catcher **and** the audit trace — the whole hook
+layer — while the sandbox and permission rules stay up. Run `python3 --version`
+before you rely on enforcement.
 
 Already have an `AGENTS.md`? Merge — don't overwrite. Keep your project's build
 commands and conventions; add the sections you want from this one.
@@ -98,16 +102,16 @@ with a different OS mechanism, so what you install under WSL2 differs per tool.
 | Agent | Reads | Boundary under WSL2 | Install / enable |
 |---|---|---|---|
 | **Claude Code** | `CLAUDE.md` | `bubblewrap` + `socat`, in the distro — no container | `sudo apt-get install bubblewrap socat`. Ubuntu 24.04+: also allow `bwrap` user namespaces (AppArmor). `/sandbox` → *Dependencies* lists anything missing. |
-| **Codex** | `AGENTS.md` | Landlock + seccomp, in the distro — no container | Node 22+; nothing extra for the sandbox. WSL1 is seen as "linux" but fails the seccomp/Landlock probe — you must be on WSL2. |
+| **Codex** | `AGENTS.md` | Landlock + seccomp, in the distro — no container | Node 22+; nothing extra for the sandbox. WSL1 is seen as "linux" but fails the seccomp/Landlock probe — you must be on WSL2. Enforcement is wired in **`.codex/`** (config + hooks; trusted projects only). |
 | **Gemini CLI** | `GEMINI.md` | **Container only** (Docker/Podman) — `sandbox-exec` is macOS-only, so there's no host-level boundary here | A Docker/Podman engine running *in* the distro, then `GEMINI_SANDBOX=docker` (or `-s`). Native Docker-in-WSL2 (no Docker Desktop): enable `systemd` in `/etc/wsl.conf` and join the `docker` group, or Gemini silently falls back to **no** sandbox. |
-| **Cursor, Copilot, Aider, Zed, ZCode, Vibe, …** | `AGENTS.md` | varies — most have no OS sandbox | `.claude/settings.json` and the hooks **don't apply here** — a non-Claude-Code tool doesn't read them. Get the boundary from an OS-level sandbox (WSL2 + a container) and reproduce the deny/ask policy in the tool's own permission controls (e.g. ZCode's per-agent read/write permissions). A CLI that exposes its *own* pre-tool hook can reuse `guard.py` — see *Known gaps*. |
+| **Cursor** (+ Copilot, Aider, Zed, ZCode, …) | `AGENTS.md` | Cursor: its own agent sandbox; others vary | Cursor ships **`.cursor/`** (hooks + `sandbox.json` domain allowlist). The rest don't read `.claude/` — get the boundary from an OS-level sandbox (WSL2 + a container) and reproduce the deny/ask policy in the tool's own permissions (e.g. ZCode's per-agent read/write perms + Execution Modes). Full per-tool wiring: **`docs/porting-enforcement.md`**. |
 
 So the answer to the obvious follow-up — *is the behaviour identical across
 agents?* — is: yes for the instructions, no for enforcement. Claude Code and
 Codex isolate at the host level inside the distro; Gemini CLI needs a container
-running; the `AGENTS.md`-only tools get neither the `.claude/` permission rules
-nor the hooks — those take effect only under Claude Code — so they need an
-OS-level sandbox plus whatever permission controls the tool itself provides. Set
+running; other tools don't read `.claude/`, so they need an OS-level sandbox plus
+their own permission controls — now wired for Codex (`.codex/`) and Cursor
+(`.cursor/`), and documented for ZCode, in `docs/porting-enforcement.md`. Set
 your expectations by the row above.
 
 ## No generator, no drift
@@ -121,10 +125,15 @@ CLAUDE.md                 3 lines + Claude specifics; imports AGENTS.md
 GEMINI.md                 3 lines + Gemini specifics; imports AGENTS.md
 .claude/agents/*.md       the three role prompts — the only copy
                           (YAML frontmatter for Claude Code; other tools read past it)
-.claude/settings.json     sandbox + permission rules + hook registration
-.claude/hooks/guard.py    session budget + opt-in accident catcher (config at the top)
-.claude/hooks/trace.py    audit trail
+.claude/settings.json     sandbox + permission rules + hook registration (Claude Code)
+.claude/hooks/preflight.py sandbox-prerequisite gate, fail-closed (shared across tools)
+.claude/hooks/guard.py    session budget + opt-in accident catcher (shared; config at the top)
+.claude/hooks/trace.py    audit trail (shared across tools)
 .claude/hooks/test_*.py   the tests below
+.codex/config.toml        Codex sandbox + approval policy
+.codex/hooks.json         Codex hook registration → the shared .claude/hooks/ scripts
+.cursor/hooks.json        Cursor hook registration → the shared .claude/hooks/ scripts
+docs/porting-enforcement.md  how enforcement maps onto Codex, Cursor and ZCode
 .geminiignore             keeps secrets out of Gemini's view
 managed-settings.example.json   org-wide lockdown TEMPLATE — deploy outside the repo; never read from it
 evals/golden-tasks.md     does this setup actually work?
@@ -273,9 +282,19 @@ converges on. Optional and opinionated — adopt what fits.
 
 ## Known gaps
 
-- **Enforcement is wired for Claude Code only.** Codex has execpolicy and a
-  sandbox, Gemini CLI has a sandbox flag, Vibe has per-tool permissions.
-  `guard.py` is a plain stdin→JSON script and ports to any of them.
+- **Project facts are now included** for this repo — see *Project facts* in
+  `AGENTS.md` plus `backend/AGENTS.md`, `frontend/AGENTS.md` and the `api/`
+  contract. Build and test commands are the single highest-ROI section of an
+  `AGENTS.md`; if you fork this for a different stack, run `/init` and replace
+  them, keeping it high-signal.
+- **Enforcement is now wired for Claude Code, Codex and Cursor.** `.codex/` and
+  `.cursor/` register the *same* `preflight.py` / `guard.py` / `trace.py` — they
+  share Claude Code's stdin+exit-2 contract, so it's one copy each, not a fork.
+  ZCode has no shell hook or bundled sandbox, so it relies on its Execution Modes
+  + per-agent permissions and an OS-level sandbox; it's documented, not wired.
+  Gemini CLI has a sandbox flag; Vibe has per-tool permissions. Details and
+  caveats (Codex trust, Cursor's allowlist-vs-hook precedence): see
+  `docs/porting-enforcement.md`.
 - **Mistral Vibe sub-agents are not shipped.** An earlier version generated
   `.vibe/agents/*.toml`, but the schema beyond `agent_type`/`description` was
   never verified against a live CLI, so it was removed rather than shipped
@@ -290,7 +309,20 @@ and mixing exit 2 with JSON on stdout silently discards the JSON.
 
 The hooks here were tested against simulated stdin payloads, not a live CLI. The
 sandbox settings were written against Anthropic's own example config but never
-executed. Reported caveats worth knowing: the sandbox can fail open if it cannot
-start, and its network filter does not inspect TLS, so domain fronting is
-possible. Run `evals/golden-tasks.md` on your machine before trusting this setup
-with anything irreversible.
+executed. Two caveats used to sit here bare; both now have a resolution in
+`docs/porting-enforcement.md`:
+
+- **Sandbox fail-open.** If the sandbox can't start (WSL1, native Windows, or a
+  missing `bwrap`/`socat` on Linux/WSL2) it can silently fail open.
+  `.claude/hooks/preflight.py` runs at session start and **stops the session**
+  when the boundary would be absent — fail-closed, with `HARNESS_SKIP_PREFLIGHT=1`
+  to opt out when you're isolated externally. It complements
+  `allowUnsandboxedCommands: false`, which already blocks a single command from
+  retrying outside the sandbox.
+- **TLS / domain fronting.** The network filter allowlists by SNI and can't see
+  inside TLS, so an allowlist can't stop fronting. Mitigate by trimming the
+  allowlist to your stack, fronting egress with a proxy that enforces `SNI ==
+  Host` (Codex: `features.network_proxy`), or running the agent phase offline.
+
+Run `evals/golden-tasks.md` on your machine before trusting this setup with
+anything irreversible.

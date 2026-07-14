@@ -1,0 +1,62 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+#
+# Codex enforcement for this repo — the analog of .claude/settings.json's
+# sandbox + permission layer. Behaviour comes from the shared AGENTS.md (Codex
+# reads it natively); this file adds the OS boundary and the approval policy.
+#
+# TRUST: Codex loads project-local .codex/ config, hooks and rules ONLY when the
+# project is trusted. Trust it on first run (Codex prompts), or pass
+# `codex --run-hooks-without-trust` for automation that already vets the source.
+# Untrusted -> these settings are skipped and only user/system layers apply.
+
+# Pause before crossing the sandbox boundary (network, writes outside workspace).
+approval_policy    = "on-request"
+# OS-enforced sandbox: writes limited to the workspace. macOS Seatbelt; Linux and
+# WSL2 use bubblewrap (install it — see preflight and the README's Prerequisites).
+sandbox_mode       = "workspace-write"
+approvals_reviewer = "user"          # or "auto_review" to route approvals to a reviewer agent
+
+[sandbox_workspace_write]
+# Maven Central / the npm registry need egress. NOTE: this toggle is all-or-
+# nothing — it does NOT restrict *which* domains. For a domain allowlist (and its
+# limits) see the [permissions.harness] block below and docs/porting-enforcement.md.
+network_access         = true
+exclude_slash_tmp      = false
+exclude_tmpdir_env_var = false
+
+# --- Domain-scoped egress (optional, Codex permission profiles) --------------
+# Uncomment to restrict egress to an allowlist mirroring .claude/settings.json.
+# This is the richer, beta permissions model; if your Codex version rejects it,
+# keep it commented and rely on network_access above. A domain allowlist still
+# cannot stop domain fronting (encrypted SNI) — see docs/porting-enforcement.md.
+#
+# default_permissions = "harness"
+#
+# [permissions.harness.filesystem]
+# ".env"          = "deny"
+# "**/.env.*"     = "deny"
+# "secrets/**"    = "deny"
+# "**/*.pem"      = "deny"
+# "**/*.key"      = "deny"
+# "~/.ssh/**"     = "deny"
+# "~/.aws/**"     = "deny"
+#
+# [permissions.harness.filesystem.":workspace_roots"]
+# "." = "write"
+#
+# [permissions.harness.network]
+# enabled = true
+# mode    = "limited"
+#
+# [permissions.harness.network.domains]
+# "registry.npmjs.org"    = "allow"
+# "*.npmjs.org"           = "allow"
+# "repo.maven.apache.org" = "allow"
+# "repo1.maven.org"       = "allow"
+# "github.com"            = "allow"
+# "*.githubusercontent.com" = "allow"
+
+# Command policy (deny curl/wget/sudo/gh-pr-merge; catch rm -rf ~, force-push to
+# main, curl|sh, …), the per-session tool-call ceiling and the audit trace live
+# in the SAME hook scripts under .claude/hooks/, registered in .codex/hooks.json.
+# Codex additionally keeps .git/ and .codex/ read-only in workspace-write mode.
