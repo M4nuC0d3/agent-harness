@@ -10,6 +10,8 @@
       "allowedDomains": [
         "registry.npmjs.org",
         "*.npmjs.org",
+        "repo.maven.apache.org",
+        "repo1.maven.org",
         "pypi.org",
         "*.pythonhosted.org",
         "crates.io",
@@ -46,6 +48,7 @@
       "Bash(curl:*)",
       "Bash(wget:*)",
       "Bash(sudo:*)",
+      "Bash(gh pr merge:*)",
       "WebFetch(domain:*)"
     ],
     "ask": [
@@ -81,6 +84,15 @@
           {
             "type": "command",
             "command": "python3 .claude/hooks/trace.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/format.py"
           }
         ]
       }

@@ -16,7 +16,7 @@ already knows how to read.
 | **Claude Code** | `CLAUDE.md` → imports `AGENTS.md` | yes: `.claude/agents/*.md` |
 | **Gemini CLI** | `GEMINI.md` → imports `AGENTS.md` | no — adopt the role inline |
 | **Mistral Vibe** | `AGENTS.md` | yes, but not wired here (see Known gaps) |
-| **Cursor, Copilot, Aider, Zed, Jules, …** | `AGENTS.md` | varies |
+| **Cursor, Copilot, Aider, Zed, ZCode, Jules, …** | `AGENTS.md` | varies |
 
 `AGENTS.md` is an open format stewarded by the Agentic AI Foundation and read by
 20+ agents. Everything else imports it.
@@ -100,13 +100,15 @@ with a different OS mechanism, so what you install under WSL2 differs per tool.
 | **Claude Code** | `CLAUDE.md` | `bubblewrap` + `socat`, in the distro — no container | `sudo apt-get install bubblewrap socat`. Ubuntu 24.04+: also allow `bwrap` user namespaces (AppArmor). `/sandbox` → *Dependencies* lists anything missing. |
 | **Codex** | `AGENTS.md` | Landlock + seccomp, in the distro — no container | Node 22+; nothing extra for the sandbox. WSL1 is seen as "linux" but fails the seccomp/Landlock probe — you must be on WSL2. |
 | **Gemini CLI** | `GEMINI.md` | **Container only** (Docker/Podman) — `sandbox-exec` is macOS-only, so there's no host-level boundary here | A Docker/Podman engine running *in* the distro, then `GEMINI_SANDBOX=docker` (or `-s`). Native Docker-in-WSL2 (no Docker Desktop): enable `systemd` in `/etc/wsl.conf` and join the `docker` group, or Gemini silently falls back to **no** sandbox. |
-| **Cursor, Copilot, Aider, Zed, Vibe, …** | `AGENTS.md` | varies — most have no OS sandbox | Rely on the permission rules + `guard.py`; for a real boundary, run inside WSL2 plus a container. |
+| **Cursor, Copilot, Aider, Zed, ZCode, Vibe, …** | `AGENTS.md` | varies — most have no OS sandbox | `.claude/settings.json` and the hooks **don't apply here** — a non-Claude-Code tool doesn't read them. Get the boundary from an OS-level sandbox (WSL2 + a container) and reproduce the deny/ask policy in the tool's own permission controls (e.g. ZCode's per-agent read/write permissions). A CLI that exposes its *own* pre-tool hook can reuse `guard.py` — see *Known gaps*. |
 
 So the answer to the obvious follow-up — *is the behaviour identical across
 agents?* — is: yes for the instructions, no for enforcement. Claude Code and
 Codex isolate at the host level inside the distro; Gemini CLI needs a container
-running; the `AGENTS.md`-only tools have no OS boundary and lean entirely on the
-permission rules and the hook. Set your expectations by the row above.
+running; the `AGENTS.md`-only tools get neither the `.claude/` permission rules
+nor the hooks — those take effect only under Claude Code — so they need an
+OS-level sandbox plus whatever permission controls the tool itself provides. Set
+your expectations by the row above.
 
 ## No generator, no drift
 
@@ -223,6 +225,37 @@ everywhere, and put package-specific build commands, framework conventions and
 local anti-patterns in a nested `AGENTS.md` inside that package. Nested files
 keep the root small, which is what keeps it read.
 
+## Recommendations
+
+Beyond what's already wired, these are the agentic-coding habits current practice
+converges on. Optional and opinionated — adopt what fits.
+
+- **Push repeated workflows into skills, not this file.** On-demand context
+  (loaded only when its description matches) keeps the always-loaded memory lean
+  — the same reason the root nearly blew the ~200-line budget. Three are wired in
+  `.claude/skills/` (Claude Code): `openapi-client`, `liquibase-changeset`,
+  `ddd-archunit`. Add your own for any workflow you'd otherwise explain twice.
+- **Auto-format on write.** Wired as `.claude/hooks/format.py` (PostToolUse):
+  Prettier for `frontend/**`, google-java-format for `backend/**` Java, both only
+  if installed. Best-effort and non-blocking; Spotless/Prettier in `verify` stay
+  the source of truth. Remove the PostToolUse entry to disable it.
+- **Demand evidence, not assertions.** "It works" is not a result. The evaluator
+  already verifies; have it *show* the command it ran and the test summary (a
+  screenshot for UI) so a human can trust a verdict without re-running it.
+- **Context hygiene.** `/clear` between unrelated tasks, and compact *before*
+  ~50% rather than letting it auto-compact (the model is weakest mid-compaction).
+  After two failed corrections, start fresh from `PROGRESS.md` instead of pushing
+  a polluted context further.
+- **Bounded parallelism via git worktrees.** Independent work can run as parallel
+  agents in separate worktrees — but the cap is *your* review capacity, ~2-3 in
+  practice, not the tool's.
+- **Maintain the harness like code.** On a recurring failure, reach for a hook or
+  a golden task in `evals/` before adding another `AGENTS.md` rule, and delete
+  anything the model already does right. Prompt files rot the way code does.
+- **MCP servers: least privilege.** If you wire external tools via MCP, treat
+  them like the permission allowlist — connect only what a task needs, scope the
+  tokens, and remember an MCP server is one more source of untrusted content.
+
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -236,13 +269,15 @@ keep the root small, which is what keeps it read.
 | Codex: "seccomp/landlock … not supported in this environment" | You're on WSL1 (or an old kernel) — Codex detects it as Linux but the primitives aren't there. Move to WSL2. |
 | Heredocs (`<< EOF`) fail | A known sandbox limitation: the shell needs a temp file. Write the file, then run it. |
 | The guard blocks something legitimate | Move it out of `ACCIDENT_PATTERNS` and add a `Bash(...)` **ask** rule in `.claude/settings.json`. Don't disable the sandbox. |
-| Context feels bloated | `AGENTS.md` is 149 lines; Claude Code sees 193. Anthropic warns above ~200, and `@path` imports do **not** reduce context — they load at launch. |
+| Context feels bloated | `AGENTS.md` is 160 lines; Claude Code sees ~199 — just under Anthropic's ~200 guideline. Stack detail lives in the nested `backend/` / `frontend/` `AGENTS.md` (loaded only in-tree), and repeated workflows belong in skills or `.claude/rules/*.md` (see *Recommendations*), not here. `@path` imports do **not** reduce context — they load at launch. |
 
 ## Known gaps
 
-- **No project facts.** This layer is pure process — it does not know your build
-  or test commands, which is the single highest-ROI section of an `AGENTS.md`.
-  Run your tool's `/init` in the target repo and merge the result in.
+- **Project facts are now included** for this repo — see *Project facts* in
+  `AGENTS.md` plus `backend/AGENTS.md`, `frontend/AGENTS.md` and the `api/`
+  contract. Build and test commands are the single highest-ROI section of an
+  `AGENTS.md`; if you fork this for a different stack, run `/init` and replace
+  them, keeping it high-signal.
 - **Enforcement is wired for Claude Code only.** Codex has execpolicy and a
   sandbox, Gemini CLI has a sandbox flag, Vibe has per-tool permissions.
   `guard.py` is a plain stdin→JSON script and ports to any of them.

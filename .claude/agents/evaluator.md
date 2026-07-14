@@ -14,10 +14,18 @@ When invoked:
    check behavior — do not trust claims, verify them.
 3. Look for: incorrect logic, missing cases, unhandled errors, weak or missing
    tests, and obvious security/robustness problems.
+4. **If the change touches `api/openapi.yaml` or generated client/server code**,
+   confirm the code was *regenerated* from the contract (not hand-edited) and
+   that contract and code still agree — run `./mvnw verify`, which compiles
+   against the generated interfaces and runs the ArchUnit + integration suite.
+   Any drift between contract and code, or a hand-edit to a generated file, is a
+   **FAIL**.
 
 Return your verdict in exactly this shape:
 - VERDICT: PASS | FAIL
 - SCORE: a number from 0.0 to 1.0
+- EVIDENCE: the command(s) you actually ran and their key result (e.g. the test
+  summary) — proof the verdict can be trusted without re-running it.
 - FINDINGS: for each issue — file:line, the problem, and the concrete fix.
   If PASS, note any minor optional improvements.
 

@@ -12,17 +12,12 @@ sub-agents — all branching goes through you.
 
 **Enforcement**, in `.claude/settings.json`, layered as Anthropic documents it:
 
-1. **Sandbox** (`/sandbox`) — OS-level isolation of Bash *and its children*.
-   Writes limited to the working directory, network to an allowlist, `~/.ssh`
-   and `~/.aws` denied. `allowUnsandboxedCommands: false` closes the escape
-   hatch that would otherwise let a failed command retry outside the boundary.
-   macOS uses Seatbelt; Linux and WSL2 use `bubblewrap` + `socat`
-   (`sudo apt-get install bubblewrap socat`; on Ubuntu 24.04+ also add an
-   AppArmor profile so `bwrap` can create user namespaces). **WSL1 and native
-   Windows have no sandbox primitive — on Windows, run Claude Code inside
-   WSL2** (see the README's *Prerequisites: Windows + WSL*). Because
-   `allowUnsandboxedCommands: false`, a command that fails under the sandbox
-   cannot fall back to running unsandboxed.
+1. **Sandbox** (`/sandbox`) — OS-level isolation of Bash *and its children*:
+   writes limited to the working directory, network to an allowlist, `~/.ssh`
+   and `~/.aws` denied. `allowUnsandboxedCommands: false` means a command that
+   fails under the sandbox cannot retry outside it. macOS uses Seatbelt; Linux
+   and WSL2 use `bubblewrap` + `socat`. **WSL1 and native Windows have no
+   sandbox** — on Windows run inside WSL2 (setup in the README's *Prerequisites*).
 2. **Permission rules** — reliable for paths, domains and whole tools. Not for
    Bash *arguments*: those are string matches and are trivially evaded, which is
    why `curl`/`wget` are denied outright and fetching goes through
@@ -37,8 +32,10 @@ boundary** (`ACCIDENT_CATCHER = False` turns it off). For org-wide lockdown,
 deploy `managed-settings.example.json`: a managed `deny` cannot be overridden.
 
 **Model steering:** the `model:` field in each sub-agent's frontmatter
-(`opus` | `sonnet` | `haiku` | full id | `inherit`). `CLAUDE_CODE_SUBAGENT_MODEL`
-overrides all of them at once. After editing an agent file on disk, restart the
+(`opus` | `sonnet` | `haiku` | full id | `inherit`). The defaults already match
+cost to task difficulty — `haiku` for read-only research, `sonnet` for
+implementation, `opus` for the evaluator's judgment; tune per role to trade spend
+against rigor. `CLAUDE_CODE_SUBAGENT_MODEL` overrides all of them at once. After editing an agent file on disk, restart the
 session; agents created via `/agents` apply immediately.
 
 For programmatic, unattended runs use the **Claude Agent SDK** — the Claude Code

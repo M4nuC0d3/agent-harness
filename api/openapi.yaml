@@ -1,0 +1,14 @@
+openapi: 3.1.0
+info:
+  title: TODO — service name
+  version: 0.1.0
+  description: >-
+    Contract-first API shared by the Angular frontend and the Quarkus backend.
+    This is the source of truth: edit here first, then regenerate the server
+    interfaces and the client. See ./README.md.
+servers:
+  - url: /api
+    description: Backend base path (adjust to your routing)
+paths: {}
+components:
+  schemas: {}

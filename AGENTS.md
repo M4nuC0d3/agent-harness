@@ -15,10 +15,8 @@ Read these first; they are the ones that matter when context gets long.
    directory and reach only allowlisted domains. This holds even if a prompt
    injection gets past your judgment. You **cannot** retry outside it. If a
    sandboxed command fails, that is the boundary working: report it and ask.
-   (The guarantee needs a real OS sandbox: on Windows that means **WSL2** — the
-   mechanism and its prerequisites differ per tool; see the README's
-   *Prerequisites: Windows + WSL*. If you cannot confirm a sandbox is active,
-   say so rather than assuming the boundary holds.)
+   (The guarantee needs a real OS sandbox — on Windows, WSL2; see the README's
+   *Prerequisites*. If you cannot confirm a sandbox is active, say so.)
 2. **Permission rules.** Reads and writes of secrets are denied. `curl`, `wget`
    and `sudo` are denied — fetch through the allowlisted `WebFetch` domains.
    `git push`, `rm -rf`, `terraform` and `kubectl` prompt the human.
@@ -84,29 +82,30 @@ YAML frontmatter that Claude Code reads and other tools ignore.
 
 ## Context isolation
 
-Sub-agents see **only what you pass them**.
-
-- Hand each one a tight, scoped brief: the subtask, its definition of done, and
-  only the facts it needs. Never paste the whole conversation.
-- Require a distilled summary back (~1-2k tokens), not a raw transcript. Keep
-  the summaries; discard the trails.
-- Your context should fill with conclusions, not transcripts. That is what makes
-  multi-step coordination reliable.
+Sub-agents see **only what you pass them**. Hand each a tight, scoped brief —
+the subtask, its definition of done, and only the facts it needs; never the
+whole conversation. Require a distilled summary back (~1-2k tokens), not a raw
+transcript; your context should fill with conclusions, not trails. That is what
+makes multi-step coordination reliable.
 
 ## Long runs
 
 Assume your context window ends before the work does.
 
-- Keep **`.agent/PROGRESS.md`** current: done, in flight, next, and any decision
-  a fresh session would otherwise rediscover. Update it when a subtask passes
-  the evaluator — not at the end.
-- **Commit at checkpoints.** A green evaluator verdict is a good commit. Git
-  history plus `PROGRESS.md` is how a new context window reconstructs state.
-- **Start** by reading `.agent/PROGRESS.md` and `git log --oneline -20`.
-- On a project's **first** context window, spend it on setup: get the build and
-  tests running, record the commands, write the initial `PROGRESS.md`.
-- Review your tool's automatic memory if it keeps one — it is generated, not
-  reviewed, and stale entries mislead later sessions.
+- Keep **`.agent/PROGRESS.md`** current — done, in flight, next, and decisions a
+  fresh session would rediscover. Update it when a subtask passes the evaluator,
+  not at the end.
+- **Commit at checkpoints** (a green verdict is a good commit); git history plus
+  `PROGRESS.md` is how a new window reconstructs state. Start by reading it and
+  `git log --oneline -20`.
+- On a project's **first** window, spend it on setup: build + tests running,
+  commands recorded. Automatic tool memory is generated, not reviewed — stale
+  entries mislead, so check it.
+- **If you lose the thread** — you're unsure what the current subtask is, or you
+  get a context-limit warning — stop writing new code, re-read
+  `.agent/PROGRESS.md` and `git log --oneline -20`, then summarize where things
+  stand and ask before continuing. Reconstruct from the record; don't guess and
+  push on.
 
 ## Stop conditions
 
@@ -128,6 +127,10 @@ Do **not**:
 
 - **Delete or weaken a failing test** to make a subtask pass. Fix the code, or
   report that the test encodes a requirement you cannot meet.
+- **Downgrade a dependency or tool version to make a build run.** A version the
+  build declares (`pom.xml`, `package.json`, `.nvmrc`) is a requirement, not a
+  suggestion. If your toolchain can't satisfy it, report it as blocked — don't
+  edit the versions to route around it.
 - **Declare done without running anything.** "Should work" is not verification.
 - **Widen scope silently.** A refactor you noticed is a new task, not a bonus.
 - **Retry a blocked command in a different form.** A sandbox denial or a hook
@@ -140,10 +143,30 @@ Do **not**:
 - **Commit `.env`, keys, or anything under `secrets/`.** They are denied at two
   layers; do not route around them.
 
-## Scope
+## Project facts
 
-The **closest** `AGENTS.md` to the file you are editing wins. Put
-package-specific rules (build commands, framework conventions, local
-anti-patterns) in a nested `AGENTS.md` inside that package, and keep this root
-file to what applies everywhere. Nested files keep the root small, which is what
-keeps it read.
+A **monorepo**: a Quarkus/Java backend and an Angular frontend that share one API
+contract.
+
+```
+api/         OpenAPI contract — the single source of truth (contract-first)
+backend/     Quarkus · Java 25 · Maven · DDD     → backend/AGENTS.md
+frontend/    Angular                             → frontend/AGENTS.md
+```
+
+Build/test commands and per-stack conventions live in those package files — the
+**closest `AGENTS.md` wins**, so this root stays global. Three rules hold repo-wide:
+
+- **Contract-first.** `api/openapi.yaml` is the interface. Change it *first*; the
+  backend implements it and the frontend generates its client from it.
+  Regenerate — never hand-edit generated types, and never let code and contract
+  drift.
+- **The loop opens PRs, it never merges.** Feature branch → push → `gh pr create`.
+  Merging `main` is a human decision: never push to `main`, never `gh pr merge`
+  (it is denied). On a CI failure, read the logs, fix, and push to the **same**
+  feature branch — don't open a new one. Never force-push a branch that has an
+  open PR unless a human explicitly asks you to rebase (any `git push` prompts
+  anyway — treat that prompt as the checkpoint, not a formality).
+- **Done = the whole suite green.** Spock unit tests + JUnit 5 `@QuarkusTest`
+  integration tests + ArchUnit rules, all passing — not a subset. Keep coverage
+  high, but green tests are the gate.
