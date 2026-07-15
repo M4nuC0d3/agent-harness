@@ -1,18 +1,17 @@
 # frontend/AGENTS.md
 
-Angular application, built with the Angular CLI. Package manager: **npm**
-(*confirm — switch to pnpm/yarn here if that's your setup*). Use the Node
-version the repo pins — check `.nvmrc` / `package.json` `engines` before
+Angular application, built with the Angular CLI. Package manager: **npm**. Use
+the Node version the repo pins — check `.nvmrc` / `package.json` `engines` before
 `npm install`; if your Node/npm can't satisfy it, that's a blocker (see the root
 anti-patterns), not a reason to downgrade packages.
 
 ## Build & run
 
 - Dev server: `npm start` (`ng serve`)
-- Unit tests: `npm test` (`ng test`)
+- Unit tests: `npm test` (`ng test`, runs **Vitest**); add `--coverage` for a `coverage/` report
 - Lint: `npm run lint`
 - Build: `npm run build` (`ng build`)
-- E2E: `npm run e2e` (*Playwright recommended — confirm your runner*)
+- E2E: `npm run e2e` (**Playwright**)
 
 ## Conventions — modern Angular best practices
 
@@ -28,8 +27,19 @@ Write new code to these; don't reintroduce older patterns:
 - **`ChangeDetectionStrategy.OnPush`** on every component.
 - **Typed reactive forms**; avoid template-driven forms beyond trivial cases.
 - Smart / presentational component split; feature-first folder structure.
-- State management: *state your choice — signals-only or NgRx*. Styling: *SCSS or
-  Tailwind — state it*.
+- State management: **NgRx** for shared/application state — prefer its
+  signal-based APIs (`SignalStore`, `selectSignal`) so it composes with the
+  signals above instead of reintroducing `BehaviorSubject` stores. Keep
+  local/derived UI state in component signals; reach for NgRx when state is
+  shared across features or needs effects/DevTools.
+- Styling: plain **CSS**, component-scoped `.css` files.
+- Testing: **Vitest** via the first-party `@angular/build:unit-test` builder
+  (Vitest is the Angular 21 default — don't reintroduce Karma/Jasmine). Specs use
+  Vitest's `describe`/`it`/`expect` and `vi` for mocks, with `TestBed` for
+  components. Tests run in Node + jsdom (logic, not real-browser rendering) — put
+  layout/rendering checks in the Playwright E2E suite. New projects are zoneless:
+  prefer native `async`/`await` and Vitest fake timers; if you need Zone's
+  `fakeAsync`, add `zone.js/plugins/vitest-patch` to the test polyfills.
 - Lint/format: ESLint (`angular-eslint`) + Prettier, both clean before a PR.
 
 ## API client — generated, contract-first

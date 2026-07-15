@@ -84,7 +84,9 @@ contract defines a different error schema).
 - Config in `application.properties` with `%dev` / `%test` / `%prod` profiles.
   No secrets in the repo — env vars only (see the root rules and `.gitignore`).
 - Logging via JBoss Logging (`io.quarkus.logging.Log`), never `System.out`.
-- Formatting enforced in `verify` (Spotless recommended) — state your formatter
-  here so it isn't a per-PR debate.
+- Formatting is enforced in `verify` by **Spotless**, configured to run
+  **google-java-format** — the same formatter the auto-format-on-write hook
+  (`.claude/hooks/format.py`) applies to `backend/**` Java. Settled here so it
+  isn't a per-PR debate.
 - **Do not touch:** `target/`, and anything under the generated-API output
   folder. Regenerate it; don't edit it.
