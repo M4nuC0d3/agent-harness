@@ -282,18 +282,14 @@ converges on. Optional and opinionated — adopt what fits.
 
 ## Known gaps
 
-- **Project facts are now included** for this repo — see *Project facts* in
-  `AGENTS.md` plus `backend/AGENTS.md`, `frontend/AGENTS.md` and the `api/`
-  contract. Build and test commands are the single highest-ROI section of an
-  `AGENTS.md`; if you fork this for a different stack, run `/init` and replace
-  them, keeping it high-signal.
-- **Enforcement is now wired for Claude Code, Codex and Cursor.** `.codex/` and
-  `.cursor/` register the *same* `preflight.py` / `guard.py` / `trace.py` — they
-  share Claude Code's stdin+exit-2 contract, so it's one copy each, not a fork.
-  ZCode has no shell hook or bundled sandbox, so it relies on its Execution Modes
-  + per-agent permissions and an OS-level sandbox; it's documented, not wired.
-  Gemini CLI has a sandbox flag; Vibe has per-tool permissions. Details and
-  caveats (Codex trust, Cursor's allowlist-vs-hook precedence): see
+- **Enforcement isn't wired for every tool.** It *is* wired for Claude Code,
+  Codex and Cursor — `.codex/` and `.cursor/` register the *same* `preflight.py`
+  / `guard.py` / `trace.py`, sharing Claude Code's stdin+exit-2 contract, so it's
+  one copy each, not a fork. It is **not** wired for the rest: ZCode has no shell
+  hook or bundled sandbox and leans on its Execution Modes + per-agent
+  permissions plus an OS-level sandbox (documented, not wired); Gemini CLI has
+  only a sandbox flag; Vibe has only per-tool permissions. Details and caveats
+  (Codex trust, Cursor's allowlist-vs-hook precedence): see
   `docs/porting-enforcement.md`.
 - **Mistral Vibe sub-agents are not shipped.** An earlier version generated
   `.vibe/agents/*.toml`, but the schema beyond `agent_type`/`description` was
