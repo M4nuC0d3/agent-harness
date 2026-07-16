@@ -322,3 +322,28 @@ executed. Two caveats used to sit here bare; both now have a resolution in
 
 Run `evals/golden-tasks.md` on your machine before trusting this setup with
 anything irreversible.
+
+#### Known issue: sandbox network proxy blocks the allowlist it accepted
+
+Root cause of the network-proxy restriction above, for whoever picks this up:
+
+1. `sandbox.network.allowedDomains` is correctly parsed and displayed by the
+   `/sandbox` Config tab, but the running srt proxy (`localhost:3128`) rejects
+   every listed domain with `403 blocked-by-allowlist`. Reproduced on
+   `repo1.maven.org`, `pypi.org`, `github.com`. Persists across a full session
+   restart (fresh proxy auth token each time — rules out staleness).
+2. `sandbox.excludedCommands` does not exempt commands from network namespace
+   isolation on Linux/WSL2. `ip addr` inside an "excluded" `npm install` shows
+   only the loopback interface — the process never leaves the bubblewrap
+   container. Removing the sandbox proxy env vars for such a command causes
+   immediate `EAI_AGAIN`, since the private network namespace has no route out
+   except the (separately broken) allowlist proxy.
+
+Environment: Claude Code 2.1.210, WSL2 (bubblewrap + socat, Unix-domain-socket
+bridge to an outer-namespace TCP proxy). Possible upstream bug:
+[anthropics/claude-code#30112](https://github.com/anthropics/claude-code/issues/30112).
+
+This has only been reproduced with Claude Code's sandbox on WSL2 — it has not
+yet been verified on other platforms (native Linux, macOS/Seatbelt) or with
+other AI coding tools (Codex, Gemini CLI), so treat it as scoped to that combo
+until someone confirms otherwise.
