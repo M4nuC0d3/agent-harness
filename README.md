@@ -1,188 +1,327 @@
-# hr-dashboard-backend
+# Agent Harness — a coordinator + three roles, for any coding agent
 
-This project uses Quarkus, the Supersonic Subatomic Java Framework.
+A small, model-agnostic instruction layer. It turns whichever coding agent you
+use into a **coordinator** that plans, delegates to three focused roles, and
+refuses to accept work the **evaluator** hasn't passed. Underneath it, a real
+enforcement layer stops the accidents that instructions alone cannot.
 
-If you want to learn more about Quarkus, please visit its website: <https://quarkus.io/>.
+No runtime, no orchestrator, no API keys, no build step. Just files your agent
+already knows how to read.
 
-## Running the application in dev mode
+## Works with
 
-You can run your application in dev mode that enables live coding using:
+| Tool | Reads | Native sub-agents? |
+|---|---|---|
+| **Codex** (ChatGPT) | `AGENTS.md` | no — adopt the role inline |
+| **Claude Code** | `CLAUDE.md` → imports `AGENTS.md` | yes: `.claude/agents/*.md` |
+| **Gemini CLI** | `GEMINI.md` → imports `AGENTS.md` | no — adopt the role inline |
+| **Mistral Vibe** | `AGENTS.md` | yes, but not wired here (see Known gaps) |
+| **Cursor, Copilot, Aider, Zed, ZCode, Jules, …** | `AGENTS.md` | varies |
 
-```shell script
-./mvnw quarkus:dev
+`AGENTS.md` is an open format stewarded by the Agentic AI Foundation and read by
+20+ agents. Everything else imports it.
+
+## Install
+
+Copy into the root of the project you want to work in:
+
+```bash
+cp -r AGENTS.md CLAUDE.md GEMINI.md .geminiignore \
+      .claude/ .codex/ .cursor/ docs/ evals/ /path/to/your-project/
 ```
 
-> **_NOTE:_**  Quarkus now ships with a Dev UI, which is available in dev mode only at <http://localhost:8080/q/dev/>.
+`.codex/` and `.cursor/` wire the same enforcement into Codex and Cursor; drop
+them if you only use Claude Code. Then start your agent (`claude`, `codex`,
+`gemini`, `cursor`, …) there and give it a real goal:
 
-## Packaging and running the application
+> Add pagination to the `/users` endpoint, with tests.
 
-The application can be packaged using:
+It plans first, delegates `researcher` → `implementer` → `evaluator`, and pauses
+for your approval before anything irreversible.
 
-```shell script
-./mvnw package
+**Requirements.** Each CLI installs itself (`claude`, `codex`, `gemini`, …). The
+only *extra* dependency is **Python 3**: the hooks run as
+`python3 .claude/hooks/{preflight,guard,trace}.py`. They're stdlib-only and
+shared across Claude Code, Codex and Cursor (one copy each — see
+`docs/porting-enforcement.md`), so any Python 3 works — but if `python3` isn't on
+`PATH` they don't fail loudly, they silently no-op, and an absent `PreToolUse`
+hook blocks nothing (see *Verify before trusting*). That quietly drops the
+session budget, the accident catcher **and** the audit trace — the whole hook
+layer — while the sandbox and permission rules stay up. Run `python3 --version`
+before you rely on enforcement.
+
+Already have an `AGENTS.md`? Merge — don't overwrite. Keep your project's build
+commands and conventions; add the sections you want from this one.
+
+## Prerequisites: Windows + WSL
+
+On Windows, run this harness — and the agent — **inside WSL2**. Not native
+Windows, and not WSL1. This isn't a preference: the enforcement layer leans on
+Linux kernel isolation primitives (user + mount namespaces, seccomp, Landlock)
+that native Windows doesn't expose and WSL1 doesn't implement. The instructions
+still load anywhere, but the *sandbox* — the one guarantee that holds when a
+prompt injection gets past the model — either silently degrades or refuses to
+start outside WSL2. Treat WSL2 (or a Linux container) as the baseline.
+
+> Some tools now ship a native-Windows sandbox of their own (Codex, with an
+> emerging one for others). Those are real, but this harness's `settings.json`
+> assumes the Linux sandbox and is validated against it — so WSL2 is the
+> supported path here.
+
+One-time setup, from an elevated PowerShell:
+
+```powershell
+wsl --install                 # WSL2 + a default Ubuntu
+wsl --set-default-version 2   # new distros as v2, not v1
+wsl -l -v                     # VERSION must read 2 for your distro
 ```
 
-It produces the `quarkus-run.jar` file in the `target/quarkus-app/` directory.
-Be aware that it’s not an _über-jar_ as the dependencies are copied into the `target/quarkus-app/lib/` directory.
+Then work **inside the Linux filesystem**, not the Windows mount:
 
-The application is now runnable using `java -jar target/quarkus-app/quarkus-run.jar`.
-
-If you want to build an _über-jar_, execute the following command:
-
-```shell script
-./mvnw package -Dquarkus.package.jar.type=uber-jar
+```text
+✅  ~/code/your-project              native ext4 — fast, clean POSIX paths
+❌  /mnt/c/Users/you/your-project    crosses the 9P bridge — slow, mixed paths
 ```
 
-The application, packaged as an _über-jar_, is now runnable using `java -jar target/*-runner.jar`.
+`/mnt/c` works, but its per-file latency compounds badly across the hundreds of
+reads and writes an agentic run makes, and the mixed path semantics muddy the
+sandbox's working-directory boundary. Clone into `~` and install the agent files
+there.
 
-## Creating a native executable
+One more Windows→WSL gotcha: check the repo out with **LF line endings**
+(`git config --global core.autocrlf input`, or ship a `.gitattributes`). A file
+that arrives with CRLF breaks shell heredocs and any script run directly by its
+shebang — and those failures read as sandbox or tooling bugs, not what they are.
 
-You can create a native executable using:
+### The instructions are shared; the sandbox setup is not
 
-```shell script
-./mvnw package -Dnative
+Every agent reads the *same* `AGENTS.md` and the *same* role prompts, so their
+**behaviour is identical**. Their **enforcement is not**: each draws the boundary
+with a different OS mechanism, so what you install under WSL2 differs per tool.
+
+| Agent | Reads | Boundary under WSL2 | Install / enable |
+|---|---|---|---|
+| **Claude Code** | `CLAUDE.md` | `bubblewrap` + `socat`, in the distro — no container | `sudo apt-get install bubblewrap socat`. Ubuntu 24.04+: also allow `bwrap` user namespaces (AppArmor). `/sandbox` → *Dependencies* lists anything missing. |
+| **Codex** | `AGENTS.md` | Landlock + seccomp, in the distro — no container | Node 22+; nothing extra for the sandbox. WSL1 is seen as "linux" but fails the seccomp/Landlock probe — you must be on WSL2. Enforcement is wired in **`.codex/`** (config + hooks; trusted projects only). |
+| **Gemini CLI** | `GEMINI.md` | **Container only** (Docker/Podman) — `sandbox-exec` is macOS-only, so there's no host-level boundary here | A Docker/Podman engine running *in* the distro, then `GEMINI_SANDBOX=docker` (or `-s`). Native Docker-in-WSL2 (no Docker Desktop): enable `systemd` in `/etc/wsl.conf` and join the `docker` group, or Gemini silently falls back to **no** sandbox. |
+| **Cursor** (+ Copilot, Aider, Zed, ZCode, …) | `AGENTS.md` | Cursor: its own agent sandbox; others vary | Cursor ships **`.cursor/`** (hooks + `sandbox.json` domain allowlist). The rest don't read `.claude/` — get the boundary from an OS-level sandbox (WSL2 + a container) and reproduce the deny/ask policy in the tool's own permissions (e.g. ZCode's per-agent read/write perms + Execution Modes). Full per-tool wiring: **`docs/porting-enforcement.md`**. |
+
+So the answer to the obvious follow-up — *is the behaviour identical across
+agents?* — is: yes for the instructions, no for enforcement. Claude Code and
+Codex isolate at the host level inside the distro; Gemini CLI needs a container
+running; other tools don't read `.claude/`, so they need an OS-level sandbox plus
+their own permission controls — now wired for Codex (`.codex/`) and Cursor
+(`.cursor/`), and documented for ZCode, in `docs/porting-enforcement.md`. Set
+your expectations by the row above.
+
+## No generator, no drift
+
+Every piece of content exists **exactly once**, in the format the tool actually
+reads. There is nothing to regenerate and nothing to keep in sync:
+
+```
+AGENTS.md                 the canonical instructions — the only copy
+CLAUDE.md                 3 lines + Claude specifics; imports AGENTS.md
+GEMINI.md                 3 lines + Gemini specifics; imports AGENTS.md
+.claude/agents/*.md       the three role prompts — the only copy
+                          (YAML frontmatter for Claude Code; other tools read past it)
+.claude/settings.json     sandbox + permission rules + hook registration (Claude Code)
+.claude/hooks/preflight.py sandbox-prerequisite gate, fail-closed (shared across tools)
+.claude/hooks/guard.py    session budget + opt-in accident catcher (shared; config at the top)
+.claude/hooks/trace.py    audit trail (shared across tools)
+.claude/hooks/test_*.py   the tests below
+.codex/config.toml        Codex sandbox + approval policy
+.codex/hooks.json         Codex hook registration → the shared .claude/hooks/ scripts
+.cursor/hooks.json        Cursor hook registration → the shared .claude/hooks/ scripts
+docs/porting-enforcement.md  how enforcement maps onto Codex, Cursor and ZCode
+.geminiignore             keeps secrets out of Gemini's view
+managed-settings.example.json   org-wide lockdown TEMPLATE — deploy outside the repo; never read from it
+evals/golden-tasks.md     does this setup actually work?
+.agent/                   runtime: PROGRESS.md (committed), trace.jsonl (ignored)
 ```
 
-Or, if you don't have GraalVM installed, you can run the native executable build in a container using:
+> **`managed-settings.example.json` is a template, not live config — nothing in
+> this repo reads it.** Claude Code loads managed settings only from a fixed
+> *system* path that needs admin rights: `/etc/claude-code/managed-settings.json`
+> on Linux/WSL, `/Library/Application Support/ClaudeCode/managed-settings.json` on
+> macOS, and the equivalent `ClaudeCode` path on Windows (check the docs — sources
+> disagree between `Program Files` and `ProgramData`). Copy the file there, renamed
+> to `managed-settings.json`, to enforce an org-wide lockdown. Living *outside* the
+> repo is the whole point: a `deny` a developer could edit or `git revert` away
+> would enforce nothing.
 
-```shell script
-./mvnw package -Dnative -Dquarkus.native.container-build=true
+An earlier version of this repo generated `CLAUDE.md`, `GEMINI.md` and the role
+files from a shared source. That solved duplication by adding a build step —
+and a build step for four markdown files is worse than the problem. Anthropic's
+own advice applies to tooling as much as to agents: find the simplest thing that
+works. Imports cover Claude Code and Gemini; Codex reads the canonical file
+directly; the role prompts live where Claude Code wants them anyway.
+
+## Instructions vs. enforcement
+
+`AGENTS.md` is *context*: it lowers the **probability** of an accident. The
+sandbox and permission rules lower the **possibility**. Layered as Anthropic
+documents it:
+
+| Layer | Mechanism | Guarantee |
+|---|---|---|
+| Container / worktree | blast radius | strongest, for untrusted code |
+| **Sandbox** | OS-level isolation of Bash *and its children* | holds even when a prompt injection bypasses the model |
+| **Permission rules** | declarative allow / ask / deny | reliable for paths, domains, tools |
+| **Hooks** | your code, before the permission check | only what rules can't express |
+| `AGENTS.md` | context the model reads | probabilistic |
+
+Concretely, `.claude/settings.json` enables the sandbox with
+`allowUnsandboxedCommands: false` — closing the escape hatch that would let a
+failed command retry outside the boundary — denies reads of `~/.ssh` and
+`~/.aws`, and restricts network egress to an allowlist. Permission rules deny
+secrets, `curl`, `wget` and `sudo`, gate `WebFetch` behind a domain allowlist,
+and prompt on `git push`, `rm -rf`, `terraform`, `kubectl`.
+
+**Bash patterns are not a security control.** Arguments can be reordered,
+variables expanded, wrappers used. That is why the guard's denylist is labelled
+an *accident catcher* (`ACCIDENT_CATCHER = False` disables it) and why `curl` is
+denied outright rather than pattern-matched. The hook exists for the two things
+rules cannot do: count tool calls per session, and write an audit trace.
+
+Test both without a model in the loop:
+
+```bash
+python .claude/hooks/test_guard.py  .claude/hooks/guard.py     # 24 behavioural cases
+python .claude/hooks/test_policy.py .claude/settings.json      # sandbox + rules present
 ```
 
-You can then execute your native executable with: `./target/hr-dashboard-backend-1.0-SNAPSHOT-runner`
+The guard denies only catastrophic targets (`rm -rf /`, `~`, `$HOME`, `*`) and
+*asks* for everyday deletes like `rm -rf node_modules`. A guard that blocks real
+work gets switched off, and then it protects nothing.
 
-If you want to learn more about building native executables, please consult <https://quarkus.io/guides/maven-tooling>.
+## Evals
 
-## Related Guides
+Tests prove the hook behaves. They say nothing about whether the *instructions*
+work. `evals/golden-tasks.md` holds six behavioural tasks: does it plan first,
+does the evaluator actually gate, does it resist prompt injection, does the
+sandbox hold when the model is wrong. Run them in a scratch repo, score
+Pass/Fail, and add a task every time you hit a real failure.
 
-- REST resources for Hibernate ORM with Panache ([guide](https://quarkus.io/guides/rest-data-panache)): Generate Jakarta
-  REST resources for your Hibernate Panache entities and repositories
-- REST ([guide](https://quarkus.io/guides/rest)): Build RESTful web services and APIs using Jakarta REST (formerly
-  JAX-RS)
-- REST Jackson ([guide](https://quarkus.io/guides/rest#json-serialisation)): Jackson serialization support for Quarkus
-  REST. This extension is not compatible with the quarkus-resteasy extension, or any of the extensions that depend on it
-- JDBC Driver - MariaDB ([guide](https://quarkus.io/guides/datasource)): Connect to the MariaDB database via JDBC
+## Choosing the model per role
 
-## Provided Code
+The roles are model-agnostic. Where a tool lets you pin a model it is the
+`model:` field in the sub-agent's frontmatter:
 
-### REST Data with Panache
-
-Generating Jakarta REST resources with Panache
-
-[Related guide section...](https://quarkus.io/guides/rest-data-panache)
-
-### REST
-
-Easily start your REST Web Services
-
-[Related guide section...](https://quarkus.io/guides/getting-started-reactive#reactive-jax-rs-resources)
-
-## Microsoft Entra ID (Azure AD) SSO setup
-
-SSO login (Angular SPA via MSAL.js + Quarkus backend validating Bearer tokens
-via `quarkus-oidc`) and the 25-minute-inactivity warning dialog are already
-implemented in code, but wired up against placeholder configuration — no real
-Azure AD tenant exists yet. This section is what a human needs to do to make
-it actually work against a real tenant.
-
-### 1. Create two Azure AD app registrations
-
-**SPA registration** (the Angular frontend):
-
-- Platform type: **Single-page application**.
-- Redirect URI(s): must match the `redirectUri` placeholder in
-  `frontend/src/environment/environment.ts` — for local dev this is
-  `http://localhost:4200`; add the production URL as an additional redirect
-  URI when deploying.
-- **No client secret needed, ever.** This is a public PKCE client: MSAL.js
-  performs the Authorization Code + PKCE flow entirely in the browser, and the
-  backend only *validates* tokens — it never issues them and never needs a
-  secret either.
-
-**API registration** (the Quarkus backend, exposed as a protected resource):
-
-- Under **Expose an API**, set an Application ID URI of the form
-  `api://{apiClientId}` (this matches the `api://{apiClientId}/access_as_user`
-  scope already declared in the `azureAd` security scheme in
-  `api/openapi.yaml`).
-- Add a scope named `access_as_user`.
-- Back in the **SPA registration**, add a delegated API permission for that
-  `access_as_user` scope (pointing at the API registration) and grant admin
-  consent for it.
-
-**Important gotcha:** in the API registration's manifest, set
-`accessTokenAcceptedVersion` to `2`. The OIDC config in
-`src/main/resources/application.properties` is hardcoded against the Azure AD
-**v2.0** authority endpoint
-(`https://login.microsoftonline.com/${AZURE_AD_TENANT_ID}/v2.0`). If the API
-registration is left on v1.0 (the manifest default for older app
-registrations), Azure AD will issue v1.0-format tokens whose issuer/audience
-`quarkus-oidc` will reject against the v2.0 endpoint it's configured for.
-
-### 2. Plug in the real values
-
-**Backend** — export these environment variables before running
-`./mvnw quarkus:dev` (or in the production environment), exactly as
-referenced in `src/main/resources/application.properties`:
-
-- `AZURE_AD_TENANT_ID` — used in `quarkus.oidc.auth-server-url`.
-- `AZURE_AD_API_CLIENT_ID` — used in both `quarkus.oidc.client-id` and
-  `quarkus.oidc.token.audience` (as `api://${AZURE_AD_API_CLIENT_ID}`), so it
-  must be the **API** registration's client/application ID, not the SPA's.
-
-Without these exported, `%dev`/`%test` profiles fall back to placeholder
-values and disable OIDC discovery on purpose (see the comments in
-`application.properties`) so local dev/test boot doesn't hang trying to reach
-`login.microsoftonline.com`.
-
-**Frontend** — replace the placeholder fields in
-`frontend/src/environment/environment.ts` (in the `auth` block) with the real
-values from the two app registrations above:
-
-- `tenantId` — currently `'REPLACE_WITH_TENANT_ID'`.
-- `spaClientId` — currently `'REPLACE_WITH_SPA_CLIENT_ID'` (the **SPA**
-  registration's client ID).
-- `apiClientId` — currently `'REPLACE_WITH_API_CLIENT_ID'` (the **API**
-  registration's client ID; must match `AZURE_AD_API_CLIENT_ID` on the
-  backend).
-- `redirectUri` / `postLogoutRedirectUri` — already `http://localhost:4200`
-  for local dev; update for other environments to match the SPA
-  registration's redirect URIs.
-
-Note: these are **not** runtime secrets. `environment.ts` is baked into the
-JS bundle at build time, and tenant ID / client IDs are public identifiers
-for a public SPA client (by design — that's why no client secret exists).
-They're placeholders only because the real values aren't known yet, not
-because they need to be hidden.
-
-### 3. Manual verification required (cannot be automated here)
-
-Once the above is filled in, a human must perform one real end-to-end login
-test against a real Azure AD tenant: redirect to the Microsoft login page →
-consent → land back authenticated in the app → a call to a protected
-`/api/*` endpoint succeeds with the attached Bearer token. This requires an
-interactive Microsoft account consent flow, which cannot be performed or
-verified by an AI agent in a sandboxed environment.
-
-Everything else — auth guard logic, token audience/issuer configuration,
-backend 401/200 tests, and the idle-timeout countdown logic — was written
-with automated tests in mind and is meant to be verified by running the
-project's full test suite once a working build environment is available. In
-this repository's current sandbox, both `npm install`/`npm test` and
-`./mvnw verify` fail due to an external network-proxy restriction unrelated
-to the feature code itself, so **nothing on this feature branch has actually
-been build/test-verified yet**. Before merging, a human needs to run, in an
-unrestricted environment:
-
-```shell script
-./mvnw verify
+```yaml
+---
+name: evaluator
+model: opus      # judgment → strongest
+---
 ```
 
-and, from `frontend/`:
+Convention: judgment → strongest, implementation → balanced, search →
+fast/cheap. Claude Code can cap everything at once with
+`CLAUDE_CODE_SUBAGENT_MODEL=haiku`. Other CLIs take `--model` at startup.
 
-```shell script
-npm run lint && npm test && npm run build
-```
+## Going programmatic
+
+For unattended runs (CI, pipelines, products) use the vendor's agent SDK rather
+than hand-writing an orchestrator: **Claude Agent SDK**, **OpenAI Agents SDK**,
+**Google ADK**. Each ships the agent loop, tool execution, sub-agents and
+permission hooks you would otherwise rebuild. The role prompts here are plain
+markdown and drop straight into their sub-agent definitions.
+
+## Monorepos
+
+The **closest** `AGENTS.md` wins. Keep this root file to what applies
+everywhere, and put package-specific build commands, framework conventions and
+local anti-patterns in a nested `AGENTS.md` inside that package. Nested files
+keep the root small, which is what keeps it read.
+
+## Recommendations
+
+Beyond what's already wired, these are the agentic-coding habits current practice
+converges on. Optional and opinionated — adopt what fits.
+
+- **Push repeated workflows into skills, not this file.** On-demand context
+  (loaded only when its description matches) keeps the always-loaded memory lean
+  — the same reason the root nearly blew the ~200-line budget. Three are wired in
+  `.claude/skills/` (Claude Code): `openapi-client`, `liquibase-changeset`,
+  `ddd-archunit`. Add your own for any workflow you'd otherwise explain twice.
+- **Auto-format on write.** Wired as `.claude/hooks/format.py` (PostToolUse):
+  Prettier for `frontend/**`, google-java-format for `backend/**` Java, both only
+  if installed. Best-effort and non-blocking; Spotless/Prettier in `verify` stay
+  the source of truth. Remove the PostToolUse entry to disable it.
+- **Demand evidence, not assertions.** "It works" is not a result. The evaluator
+  already verifies; have it *show* the command it ran and the test summary (a
+  screenshot for UI) so a human can trust a verdict without re-running it.
+- **Context hygiene.** `/clear` between unrelated tasks, and compact *before*
+  ~50% rather than letting it auto-compact (the model is weakest mid-compaction).
+  After two failed corrections, start fresh from `PROGRESS.md` instead of pushing
+  a polluted context further.
+- **Bounded parallelism via git worktrees.** Independent work can run as parallel
+  agents in separate worktrees — but the cap is *your* review capacity, ~2-3 in
+  practice, not the tool's.
+- **Maintain the harness like code.** On a recurring failure, reach for a hook or
+  a golden task in `evals/` before adding another `AGENTS.md` rule, and delete
+  anything the model already does right. Prompt files rot the way code does.
+- **MCP servers: least privilege.** If you wire external tools via MCP, treat
+  them like the permission allowlist — connect only what a task needs, scope the
+  tokens, and remember an MCP server is one more source of untrusted content.
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `/agents` doesn't list the sub-agents | You edited files on disk — restart the Claude Code session. Agents created via `/agents` apply immediately. |
+| The agent ignores `AGENTS.md` / `CLAUDE.md` | It must be in the directory you launched from (or a parent). Check with `/memory` (Claude Code) or `/memory show` (Gemini CLI). |
+| Codex/Vibe ignore my `CODEX.md` / `MISTRAL.md` | Neither filename is read by anything. Both tools read `AGENTS.md`. |
+| Gemini loads `GEMINI.md` but not the rest | Run `/memory refresh`. Imports resolve at load time, max depth 5. |
+| Claude Code sandbox won't start on Linux/WSL2 | Install `bubblewrap` + `socat` (`/sandbox` → *Dependencies* shows what's missing); on Ubuntu 24.04+ allow `bwrap` user namespaces. WSL1 and native Windows are unsupported — see *Prerequisites: Windows + WSL*. |
+| Gemini CLI runs but the status bar shows "no sandbox" under WSL2 | `sandbox-exec` is macOS-only, so WSL2 needs a container: start a Docker/Podman engine in the distro and set `GEMINI_SANDBOX=docker`. With native Docker (no Docker Desktop) enable `systemd` and join the `docker` group. |
+| Codex: "seccomp/landlock … not supported in this environment" | You're on WSL1 (or an old kernel) — Codex detects it as Linux but the primitives aren't there. Move to WSL2. |
+| Heredocs (`<< EOF`) fail | A known sandbox limitation: the shell needs a temp file. Write the file, then run it. |
+| The guard blocks something legitimate | Move it out of `ACCIDENT_PATTERNS` and add a `Bash(...)` **ask** rule in `.claude/settings.json`. Don't disable the sandbox. |
+| Context feels bloated | `AGENTS.md` is 160 lines; Claude Code sees ~199 — just under Anthropic's ~200 guideline. Stack detail lives in the nested `backend/` / `frontend/` `AGENTS.md` (loaded only in-tree), and repeated workflows belong in skills or `.claude/rules/*.md` (see *Recommendations*), not here. `@path` imports do **not** reduce context — they load at launch. |
+
+## Known gaps
+
+- **Enforcement isn't wired for every tool.** It *is* wired for Claude Code,
+  Codex and Cursor — `.codex/` and `.cursor/` register the *same* `preflight.py`
+  / `guard.py` / `trace.py`, sharing Claude Code's stdin+exit-2 contract, so it's
+  one copy each, not a fork. It is **not** wired for the rest: ZCode has no shell
+  hook or bundled sandbox and leans on its Execution Modes + per-agent
+  permissions plus an OS-level sandbox (documented, not wired); Gemini CLI has
+  only a sandbox flag; Vibe has only per-tool permissions. Details and caveats
+  (Codex trust, Cursor's allowlist-vs-hook precedence): see
+  `docs/porting-enforcement.md`.
+- **Mistral Vibe sub-agents are not shipped.** An earlier version generated
+  `.vibe/agents/*.toml`, but the schema beyond `agent_type`/`description` was
+  never verified against a live CLI, so it was removed rather than shipped
+  broken. Vibe reads `AGENTS.md` and adopts roles inline.
+
+## Verify before trusting
+
+Hook schemas, frontmatter fields and import syntax move fast — published sources
+already disagree on whether Claude Code exposes 27 or 30 hook lifecycle events.
+Exit-code semantics have a real footgun: exit 1 blocks nothing, exit 2 blocks,
+and mixing exit 2 with JSON on stdout silently discards the JSON.
+
+The hooks here were tested against simulated stdin payloads, not a live CLI. The
+sandbox settings were written against Anthropic's own example config but never
+executed. Two caveats used to sit here bare; both now have a resolution in
+`docs/porting-enforcement.md`:
+
+- **Sandbox fail-open.** If the sandbox can't start (WSL1, native Windows, or a
+  missing `bwrap`/`socat` on Linux/WSL2) it can silently fail open.
+  `.claude/hooks/preflight.py` runs at session start and **stops the session**
+  when the boundary would be absent — fail-closed, with `HARNESS_SKIP_PREFLIGHT=1`
+  to opt out when you're isolated externally. It complements
+  `allowUnsandboxedCommands: false`, which already blocks a single command from
+  retrying outside the sandbox.
+- **TLS / domain fronting.** The network filter allowlists by SNI and can't see
+  inside TLS, so an allowlist can't stop fronting. Mitigate by trimming the
+  allowlist to your stack, fronting egress with a proxy that enforces `SNI ==
+  Host` (Codex: `features.network_proxy`), or running the agent phase offline.
+
+Run `evals/golden-tasks.md` on your machine before trusting this setup with
+anything irreversible.
 
 #### Known issue: sandbox network proxy blocks the allowlist it accepted
 
