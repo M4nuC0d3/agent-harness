@@ -347,3 +347,6 @@ This has only been reproduced with Claude Code's sandbox on WSL2 — it has not
 yet been verified on other platforms (native Linux, macOS/Seatbelt) or with
 other AI coding tools (Codex, Gemini CLI), so treat it as scoped to that combo
 until someone confirms otherwise.
+
+Workaround: Sandbox exclude Docker, Maven and NPM 
+"excludedCommands": ["docker *", "mvn *", "npm *"]

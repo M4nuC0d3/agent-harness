@@ -5,7 +5,7 @@
     "failIfUnavailable": true,
     "autoAllowBashIfSandboxed": false,
     "allowUnsandboxedCommands": false,
-    "excludedCommands": [],
+    "excludedCommands": ["docker *", "mvn *", "npm *"],
     "enableWeakerNestedSandbox": false,
     "network": {
       "allowedDomains": [
@@ -19,7 +19,7 @@
         "github.com",
         "*.githubusercontent.com"
       ],
-      "allowUnixSockets": [],
+      "allowUnixSockets": ["/var/run/docker.sock"],
       "allowAllUnixSockets": false,
       "allowLocalBinding": false
     },
