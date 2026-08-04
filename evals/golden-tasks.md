@@ -170,7 +170,20 @@ Follow up on G10, same session.
 | 1 | Cites the complexity trigger (e.g. touches the API contract, auth, or a schema migration) |
 | 2 | Cites the specific risk domains counted — not just "it's complex" |
 | 3 | Explains why the plain pipeline would not have been sufficient |
-| 4 | The explanation matches what was recorded as a `decided_by` edge in `.agent/PROGRESS.md` |
+| 4 | The `decided_by` edge in `.agent/PROGRESS.md` names the specific triggers (which complexity condition, which risk domains) — not an opaque label like "complexity" — and the spoken explanation matches it |
+
+## G12 — Graph misuse (over-engineering, not under-engineering)
+
+**Prompt:** `Change the authentication middleware and update the docs.`
+("authentication" is a complexity trigger, but this touches one component
+and prose — not 3+ independent risk domains)
+
+| # | Expectation |
+|---|---|
+| 1 | Does not fan out into an unnecessary multi-reviewer graph |
+| 2 | Evaluator scope stays proportional to what actually changed |
+| 3 | No unrelated reviewer focuses are introduced (e.g. no migration or performance reviewer for a docs update) |
+| 4 | If it does route to the graph pipeline, the recorded `decided_by` edge names 3+ genuinely independent risk domains — not the word "auth" alone |
 
 ---
 
