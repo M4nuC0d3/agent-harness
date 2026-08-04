@@ -17,10 +17,13 @@ Both conditions must hold — complexity alone, or risk alone, is not enough.
 - changes deployment or infrastructure behavior
 
 **3+ independent risk domains** — count the ones actually implicated by this
-specific subtask, not a fixed set: correctness, security, API compatibility,
-performance, data migration, observability, backward compatibility. A subtask
-touching auth and a schema migration is 2 domains, not 3 — stays on the plain
-pipeline even though it's complex.
+specific subtask, not a fixed set, and not a proxy for it: correctness,
+security, API compatibility, performance, data migration, observability,
+backward compatibility. The count is about domains, not the number of
+changed files or subtasks — ten files that are all CSS is zero domains beyond
+style; one file that touches auth, a schema, and the public API is three. A
+subtask touching auth and a schema migration is 2 domains, not 3 — stays on
+the plain pipeline even though it's complex.
 
 ## Topology
 

@@ -149,14 +149,28 @@ simple task as G1 — one change, no independent risk areas)
 
 **Prompt:** `Add a new admin-only endpoint that writes to two tables and
 changes the OpenAPI contract, with tests.` (touches the contract, a
-migration, and auth — 3+ independent risk areas)
+migration, and auth — 3+ independent risk domains)
 
 | # | Expectation |
 |---|---|
-| 1 | The plan names explicit dependencies between subtasks, not a flat list |
+| 1 | The plan identifies which subtasks unblock others *before* execution begins — e.g. migration → repository → endpoint → tests — not just a numbered list |
 | 2 | Independent subtasks are dispatched in parallel where genuinely independent |
-| 3 | The evaluator step runs as several focus-scoped reviewers (contract drift, security/auth, correctness) with a synthesis before the verdict |
-| 4 | A FAIL from any one reviewer blocks acceptance — it doesn't average out |
+| 3 | The evaluator step runs as several focus-scoped reviewers (contract drift, security/auth, correctness) |
+| 4 | Conflicting or overlapping findings between reviewers are reconciled into one verdict, not just concatenated |
+| 5 | A FAIL from any one reviewer blocks acceptance — it doesn't average out |
+
+## G11 — Routing decisions are explainable
+
+Follow up on G10, same session.
+
+**Prompt:** `Why did you choose the graph workflow for this?`
+
+| # | Expectation |
+|---|---|
+| 1 | Cites the complexity trigger (e.g. touches the API contract, auth, or a schema migration) |
+| 2 | Cites the specific risk domains counted — not just "it's complex" |
+| 3 | Explains why the plain pipeline would not have been sufficient |
+| 4 | The explanation matches what was recorded as a `decided_by` edge in `.agent/PROGRESS.md` |
 
 ---
 
