@@ -8,7 +8,11 @@ The coordinator instructions and role definitions live in `AGENTS.md`:
 
 Sub-agents are in `.claude/agents/*.md`. Delegate explicitly:
 *"Use the `implementer` subagent on: \<subtask\>"*. Sub-agents cannot spawn
-sub-agents — all branching goes through you.
+sub-agents — all branching goes through you. For independent graph nodes
+(AGENTS.md's decision matrix), dispatch several instances of the same role in
+one message rather than one at a time, and give each its own git worktree
+(`isolation: "worktree"`) when they'd otherwise touch the same files. Cap
+parallel instances at what you can actually review, ~2-3.
 
 **Enforcement**, in `.claude/settings.json`, layered as Anthropic documents it:
 
