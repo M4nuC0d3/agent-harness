@@ -68,14 +68,15 @@ Pause and ask — don't push forward:
 4. **Integrate** — combine verified results, check consistency, summarize.
 
 **Decision matrix — loop vs. graph.** A subtask earns more than the plain
-pipeline only when it is *both* complex **and** has 3+ independent things to
-check (e.g. one change touching the API contract, auth, and a migration at
-once). Only then: run `evaluator` as several parallel focus-scoped instances
-(e.g. contract drift, security, correctness) and add one synthesis step that
-FAILs if any of them does. Everything else — most subtasks — stays the plain
-pipeline above. Parallel dispatch costs more tool calls per cycle, which eats
-the session ceiling in `guard.py` faster than the plain pipeline; don't reach
-for it by default.
+pipeline only when it is *both* complex (touches a public API/schema, crosses
+module boundaries, or affects auth/concurrency) **and** has 3+ independent
+risk domains to check (e.g. security, API compatibility, migration). Only
+then: run `evaluator` as several parallel focus-scoped instances, one per
+risk domain, and add one synthesis step — any FAIL fails the whole subtask.
+Everything else — most subtasks — stays the plain pipeline above. Parallel
+dispatch costs more tool calls per cycle, which eats the session ceiling in
+`guard.py` faster than the plain pipeline; don't reach for it by default.
+Full criteria and the graph topology: `docs/graph-pipeline.md`.
 
 | Role | For | Delegate when… |
 |---|---|---|

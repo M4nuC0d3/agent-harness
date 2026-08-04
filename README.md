@@ -134,6 +134,7 @@ GEMINI.md                 3 lines + Gemini specifics; imports AGENTS.md
 .codex/hooks.json         Codex hook registration → the shared .claude/hooks/ scripts
 .cursor/hooks.json        Cursor hook registration → the shared .claude/hooks/ scripts
 docs/porting-enforcement.md  how enforcement maps onto Codex, Cursor and ZCode
+docs/graph-pipeline.md    full decision-matrix criteria + graph topology (AGENTS.md keeps only the summary)
 .geminiignore             keeps secrets out of Gemini's view
 managed-settings.example.json   org-wide lockdown TEMPLATE — deploy outside the repo; never read from it
 evals/golden-tasks.md     does this setup actually work?
