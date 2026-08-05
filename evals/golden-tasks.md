@@ -101,8 +101,9 @@ python .claude/hooks/test_policy.py .claude/settings.json
 |---|---|
 | 1 | `.agent/PROGRESS.md` exists and reflects reality |
 | 2 | It names what is done, in flight, and next |
-| 3 | Commits were made at evaluator-green checkpoints |
-| 4 | The agent reads `PROGRESS.md` and `git log` at the start of a new session |
+| 3 | Dependencies between subtasks are recorded as typed edges (`depends_on`, `supersedes`, `caused`, `decided_by`), not just a flat list |
+| 4 | Commits were made at evaluator-green checkpoints |
+| 5 | The agent reads `PROGRESS.md` and `git log` at the start of a new session |
 
 ## G7 — Recovery when disoriented
 
@@ -130,6 +131,59 @@ updating `api/openapi.yaml`, or hand-edit a generated client/server file.
 | 2 | It detects the code/contract mismatch or the hand-edit to generated code |
 | 3 | Verdict is **FAIL**, with the drift named as the finding |
 | 4 | The result is **not** accepted; it goes back to regenerate from the contract |
+
+---
+
+## G9 — Decision matrix restraint (does it avoid over-engineering?)
+
+**Prompt:** `Add a --verbose flag to the CLI and update the tests.` (same
+simple task as G1 — one change, no independent risk areas)
+
+| # | Expectation |
+|---|---|
+| 1 | Stays on the plain `researcher` → `implementer` → `evaluator` pipeline |
+| 2 | Does **not** fan the evaluator out into multiple focus-scoped instances |
+| 3 | If asked to justify, cites the decision matrix (< 3 independent things to check) |
+
+## G10 — Graph fan-out on a genuinely complex change
+
+**Prompt:** `Add a new admin-only endpoint that writes to two tables and
+changes the OpenAPI contract, with tests.` (touches the contract, a
+migration, and auth — 3+ independent risk domains)
+
+| # | Expectation |
+|---|---|
+| 1 | The plan identifies which subtasks unblock others *before* execution begins — e.g. migration → repository → endpoint → tests — not just a numbered list |
+| 2 | Independent subtasks are dispatched in parallel where genuinely independent |
+| 3 | The evaluator step runs as several focus-scoped reviewers (contract drift, security/auth, correctness) |
+| 4 | Conflicting or overlapping findings between reviewers are reconciled into one verdict, not just concatenated |
+| 5 | A FAIL from any one reviewer blocks acceptance — it doesn't average out |
+
+## G11 — Routing decisions are explainable
+
+Follow up on G10, same session.
+
+**Prompt:** `Why did you choose the graph workflow for this?`
+
+| # | Expectation |
+|---|---|
+| 1 | Cites the complexity trigger (e.g. touches the API contract, auth, or a schema migration) |
+| 2 | Cites the specific risk domains counted — not just "it's complex" |
+| 3 | Explains why the plain pipeline would not have been sufficient |
+| 4 | The `decided_by` edge in `.agent/PROGRESS.md` names the specific triggers (which complexity condition, which risk domains) — not an opaque label like "complexity" — and the spoken explanation matches it |
+
+## G12 — Graph misuse (over-engineering, not under-engineering)
+
+**Prompt:** `Change the authentication middleware and update the docs.`
+("authentication" is a complexity trigger, but this touches one component
+and prose — not 3+ independent risk domains)
+
+| # | Expectation |
+|---|---|
+| 1 | Does not fan out into an unnecessary multi-reviewer graph |
+| 2 | Evaluator scope stays proportional to what actually changed |
+| 3 | No unrelated reviewer focuses are introduced (e.g. no migration or performance reviewer for a docs update) |
+| 4 | If it does route to the graph pipeline, the recorded `decided_by` edge names 3+ genuinely independent risk domains — not the word "auth" alone |
 
 ---
 

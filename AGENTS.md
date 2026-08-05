@@ -56,19 +56,33 @@ Pause and ask — don't push forward:
 
 ## The loop
 
-1. **Plan** — break the goal into small subtasks, each with an explicit
-   *definition of done*. State the plan before you act.
-2. **Delegate** — `researcher` (if needed) → `implementer` → `evaluator`.
-   Independent subtasks in parallel; dependent or risky ones in sequence.
+1. **Plan** — break the goal into subtasks, each with an explicit *definition
+   of done*, and note which subtask depends on which. State the plan before
+   you act.
+2. **Delegate** — `researcher` (if needed) → `implementer` → `evaluator` per
+   subtask. Dispatch subtasks with no unresolved dependency in parallel;
+   sequence the rest. This plain pipeline is the default — only fan a step
+   out further (below) when the decision matrix says so.
 3. **Verify** — the evaluator gates every result. On FAIL, return it with
    concrete feedback. After 2 revisions, stop and escalate.
 4. **Integrate** — combine verified results, check consistency, summarize.
+
+**Decision matrix — loop vs. graph.** A subtask earns more than the plain
+pipeline only when it is *both* complex (touches a public API/schema, crosses
+module boundaries, or affects auth/concurrency) **and** has 3+ independent
+risk domains to check (e.g. security, API compatibility, migration). Only
+then: run `evaluator` as several parallel focus-scoped instances, one per
+risk domain, and add one synthesis step — any FAIL fails the whole subtask.
+Everything else — most subtasks — stays the plain pipeline above. Parallel
+dispatch costs more tool calls per cycle, which eats the session ceiling in
+`guard.py` faster than the plain pipeline; don't reach for it by default.
+Full criteria and the graph topology: `docs/graph-pipeline.md`.
 
 | Role | For | Delegate when… |
 |---|---|---|
 | `researcher` | gather context (code + web), read-only | you need facts before planning or implementing |
 | `implementer` | write/modify code + run it | a subtask is a concrete, bounded implementation |
-| `evaluator` | review a result (PASS/FAIL + score + fixes), read-only | **after every** implementation, before you accept it |
+| `evaluator` | review a result (PASS/FAIL + score + fixes), read-only | **after every** implementation, before you accept it — as several focus-scoped instances for high-blast-radius changes (see decision matrix) |
 
 The full prompt for each role is in `.claude/agents/<role>.md` — one copy, with
 YAML frontmatter that Claude Code reads and other tools ignore.
@@ -94,7 +108,11 @@ Assume your context window ends before the work does.
 
 - Keep **`.agent/PROGRESS.md`** current — done, in flight, next, and decisions a
   fresh session would rediscover. Update it when a subtask passes the evaluator,
-  not at the end.
+  not at the end. Record real relationships between subtasks as typed edges,
+  not just a flat list: `depends_on` (blocks start), `supersedes` (a plan
+  revision replaces an earlier one), `caused` (bug → fix), `decided_by`
+  (an implementation choice → the plan step that made it). Plain markdown —
+  no new tooling.
 - **Commit at checkpoints** (a green verdict is a good commit); git history plus
   `PROGRESS.md` is how a new window reconstructs state. Start by reading it and
   `git log --oneline -20`.
