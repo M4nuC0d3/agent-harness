@@ -1,18 +1,22 @@
 # backend/AGENTS.md
 
-Quarkus service, **Java 25**, built with **Maven** (`./mvnw`). Packaged as a JVM
+Quarkus service, **Java 25**, built with **Maven** (`mvn`). Packaged as a JVM
 jar for now — no native build yet. Domain-Driven Design, with the architecture
 **enforced by tests**, not just convention.
 
+Use the **system `mvn`**, not the `./mvnw` wrapper — the wrapper trips the
+sandbox (see the README's *Prerequisites: Maven*). Install Maven in whatever
+environment runs the agent (WSL2 distro or elsewhere).
+
 ## Build & run
 
-- Dev: `./mvnw quarkus:dev` — live reload; starts Dev Services (a MariaDB
+- Dev: `mvn quarkus:dev` — live reload; starts Dev Services (a MariaDB
   container) automatically.
-- Unit tests only: `./mvnw test`
-- Full suite (unit + integration): `./mvnw verify`
-- A single test: `./mvnw test -Dtest=SomethingSpec` (Spock) or
+- Unit tests only: `mvn test`
+- Full suite (unit + integration): `mvn verify`
+- A single test: `mvn test -Dtest=SomethingSpec` (Spock) or
   `-Dtest=ClassName#method` (JUnit).
-- Package: `./mvnw package` → runnable JVM jar under `target/quarkus-app/`.
+- Package: `mvn package` → runnable JVM jar under `target/quarkus-app/`.
 
 Integration tests need a running **Docker** daemon (Testcontainers / Dev
 Services). On Windows, run inside WSL2 — see the README's *Prerequisites:
@@ -37,7 +41,7 @@ Quarkus, no JPA, no Jackson. Invariants live in the aggregate, not in services;
 value objects are immutable.
 
 These rules are **enforced by ArchUnit** (`*ArchTest` / `*ArchitectureTest`),
-run as part of `./mvnw verify`. The ArchUnit suite is the source of truth for the
+run as part of `mvn verify`. The ArchUnit suite is the source of truth for the
 layering: forbidden dependencies, package boundaries, "domain has no framework
 imports", naming. If you change the structure, update the ArchUnit rules **in the
 same PR** — a green build must mean the rules still hold. Never weaken a rule to

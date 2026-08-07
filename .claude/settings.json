@@ -5,7 +5,7 @@
     "failIfUnavailable": true,
     "autoAllowBashIfSandboxed": false,
     "allowUnsandboxedCommands": false,
-    "excludedCommands": ["docker *", "mvn *", "npm *"],
+    "excludedCommands": ["docker *", "mvn *", "npm *", "find *", "ls *", "grep *"],
     "enableWeakerNestedSandbox": false,
     "network": {
       "allowedDomains": [
