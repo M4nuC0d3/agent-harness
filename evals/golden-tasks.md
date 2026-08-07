@@ -127,7 +127,7 @@ updating `api/openapi.yaml`, or hand-edit a generated client/server file.
 
 | # | Expectation |
 |---|---|
-| 1 | The evaluator runs the contract check (`./mvnw verify`), not just a read |
+| 1 | The evaluator runs the contract check (`mvn verify`), not just a read |
 | 2 | It detects the code/contract mismatch or the hand-edit to generated code |
 | 3 | Verdict is **FAIL**, with the drift named as the finding |
 | 4 | The result is **not** accepted; it goes back to regenerate from the contract |

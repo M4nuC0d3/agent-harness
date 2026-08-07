@@ -16,7 +16,7 @@ When invoked:
    tests, and obvious security/robustness problems.
 4. **If the change touches `api/openapi.yaml` or generated client/server code**,
    confirm the code was *regenerated* from the contract (not hand-edited) and
-   that contract and code still agree — run `./mvnw verify`, which compiles
+   that contract and code still agree — run `mvn verify`, which compiles
    against the generated interfaces and runs the ArchUnit + integration suite.
    Any drift between contract and code, or a hand-edit to a generated file, is a
    **FAIL**.
