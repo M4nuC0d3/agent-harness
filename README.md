@@ -12,7 +12,7 @@ already knows how to read.
 
 | Tool | Reads | Native sub-agents? |
 |---|---|---|
-| **Codex** (ChatGPT) | `AGENTS.md` | no — adopt the role inline |
+| **Codex** (ChatGPT) | `AGENTS.md` | yes: `.codex/agents/*.toml` |
 | **Claude Code** | `CLAUDE.md` → imports `AGENTS.md` | yes: `.claude/agents/*.md` |
 | **Gemini CLI** | `GEMINI.md` → imports `AGENTS.md` | no — adopt the role inline |
 | **Mistral Vibe** | `AGENTS.md` | yes, but not wired here (see Known gaps) |
@@ -31,7 +31,9 @@ cp -r AGENTS.md CLAUDE.md GEMINI.md .geminiignore \
 ```
 
 `.codex/` and `.cursor/` wire the same enforcement into Codex and Cursor; drop
-them if you only use Claude Code. Then start your agent (`claude`, `codex`,
+them if you only use Claude Code. `.codex/agents/*.toml` additionally gives
+Codex the same three roles as native sub-agents (`[agents]` in
+`.codex/config.toml` turns this on). Then start your agent (`claude`, `codex`,
 `gemini`, `cursor`, …) there and give it a real goal:
 
 > Add pagination to the `/users` endpoint, with tests.
@@ -132,14 +134,16 @@ reads. There is nothing to regenerate and nothing to keep in sync:
 AGENTS.md                 the canonical instructions — the only copy
 CLAUDE.md                 3 lines + Claude specifics; imports AGENTS.md
 GEMINI.md                 3 lines + Gemini specifics; imports AGENTS.md
-.claude/agents/*.md       the three role prompts — the only copy
+.claude/agents/*.md       the three role prompts for Claude Code
                           (YAML frontmatter for Claude Code; other tools read past it)
 .claude/settings.json     sandbox + permission rules + hook registration (Claude Code)
 .claude/hooks/preflight.py sandbox-prerequisite gate, fail-closed (shared across tools)
 .claude/hooks/guard.py    session budget + opt-in accident catcher (shared; config at the top)
 .claude/hooks/trace.py    audit trail (shared across tools)
 .claude/hooks/test_*.py   the tests below
-.codex/config.toml        Codex sandbox + approval policy
+.codex/config.toml        Codex sandbox + approval policy + [agents] switch
+.codex/agents/*.toml      the three roles as native Codex sub-agents (own copy;
+                          same responsibilities as .claude/agents/*.md)
 .codex/hooks.json         Codex hook registration → the shared .claude/hooks/ scripts
 .cursor/hooks.json        Cursor hook registration → the shared .claude/hooks/ scripts
 docs/porting-enforcement.md  how enforcement maps onto Codex, Cursor and ZCode
@@ -164,8 +168,11 @@ An earlier version of this repo generated `CLAUDE.md`, `GEMINI.md` and the role
 files from a shared source. That solved duplication by adding a build step —
 and a build step for four markdown files is worse than the problem. Anthropic's
 own advice applies to tooling as much as to agents: find the simplest thing that
-works. Imports cover Claude Code and Gemini; Codex reads the canonical file
-directly; the role prompts live where Claude Code wants them anyway.
+works. Imports cover Claude Code and Gemini; the role prompts live where each
+tool wants them — `.claude/agents/*.md` for Claude Code, `.codex/agents/*.toml`
+for Codex — each a standalone copy carrying the same responsibilities, not a
+generated one. Every other tool reads `AGENTS.md` directly and adopts a role
+inline.
 
 ## Instructions vs. enforcement
 
@@ -224,6 +231,11 @@ name: evaluator
 model: opus      # judgment → strongest
 ---
 ```
+
+Codex's `.codex/agents/*.toml` mirrors this with its own `model` /
+`model_reasoning_effort` fields per role, with a fallback in
+`.codex/config.toml`'s `[agents]` block
+(`default_subagent_model`, `default_subagent_reasoning_effort`).
 
 Convention: judgment → strongest, implementation → balanced, search →
 fast/cheap. Claude Code can cap everything at once with
