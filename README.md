@@ -234,10 +234,17 @@ settings.consumer.example.json  what a consuming project copies: same boundary,
 .codex-plugin/plugin.json the same, for Codex (`skills` takes ONE directory path;
                           there is no `agents` field, so the roles stay a copy)
 .agents/plugins/marketplace.json the catalog `codex plugin marketplace add` reads
-hooks/hooks.json          Codex plugin hook registration → the same three
+.codex-plugin/hooks.json  Codex plugin hook registration → the same three
                           scripts, resolved via ${PLUGIN_ROOT} (the install
                           cache is not a git checkout, so the git-root path
-                          .codex/hooks.json uses would not resolve there)
+                          .codex/hooks.json uses would not resolve there).
+                          Lives under .codex-plugin/, not the repo-root
+                          hooks/hooks.json — that path is Claude Code's own
+                          default plugin-hook location too, and Claude Code
+                          merges it with plugin.json's inline hooks instead
+                          of replacing them, so a root-level file written for
+                          Codex would double-register with an unresolved
+                          ${PLUGIN_ROOT} under Claude Code.
 .github/workflows/harness.yml   runs all five suites on every push and PR
 .codex/config.toml        Codex sandbox + approval policy + [agents] switch
 .codex/agents/*.toml      the three roles as native Codex sub-agents (own copy;

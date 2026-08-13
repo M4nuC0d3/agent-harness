@@ -65,12 +65,26 @@ own hook registration — not because the hooks differ, but because the paths do
   `codex plugin marketplace add M4nuC0d3/agent-harness` reads. Codex also reads
   `.claude-plugin/marketplace.json` as a legacy-compatible source, so both are
   discoverable; only the Codex one carries `policy` and `category`.
-- **`hooks/hooks.json`** — the default plugin hook file, so no `hooks` entry in
-  the manifest is needed. It registers the same `preflight.py` / `guard.py` /
-  `trace.py`, but resolves them via **`${PLUGIN_ROOT}`**. `.codex/hooks.json`
-  uses `$(git rev-parse --show-toplevel)`, which is correct for a checkout and
-  wrong for an install: plugins live in `~/.codex/plugins/cache/…`, which is not
-  a git repository. Codex also sets `CLAUDE_PLUGIN_ROOT` for compatibility.
+- **`.codex-plugin/hooks.json`**, wired via `"hooks": "./hooks.json"` in
+  `.codex-plugin/plugin.json`. It registers the same `preflight.py` /
+  `guard.py` / `trace.py`, but resolves them via **`${PLUGIN_ROOT}`**.
+  `.codex/hooks.json` uses `$(git rev-parse --show-toplevel)`, which is
+  correct for a checkout and wrong for an install: plugins live in
+  `~/.codex/plugins/cache/…`, which is not a git repository. Codex also sets
+  `CLAUDE_PLUGIN_ROOT` for compatibility.
+
+  It does **not** live at the repo-root `hooks/hooks.json` default path —
+  that path is Claude Code's own default plugin-hook location, and this repo
+  is *also* a Claude Code plugin from the same root (`.claude-plugin/marketplace.json`
+  sets `"source": "./"`). Claude Code merges a plugin's `hooks/hooks.json`
+  with `plugin.json`'s inline `hooks` block rather than one replacing the
+  other, so a Codex-only file at that path would load a second time under
+  Claude Code, where `${PLUGIN_ROOT}` is never set — it resolves to an empty
+  string, and every hook runs against `/.claude/hooks/*.py` instead of the
+  plugin's real install directory. That was a real bug in this repo, not a
+  hypothetical: installing the plugin in Claude Code produced exactly that
+  broken path. Anchoring the file outside `hooks/` sidesteps Claude Code's
+  auto-discovery entirely.
 
 Three consequences:
 
