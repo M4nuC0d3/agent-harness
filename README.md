@@ -174,7 +174,7 @@ GEMINI.md                 3 lines + Gemini specifics; imports AGENTS.md
 settings.consumer.example.json  what a consuming project copies: same boundary,
                           no hooks (the plugin brings them), plus the plugin
                           registration. Kept in sync by test_docs.py.
-.claude/hooks/preflight.py sandbox-prerequisite gate, fail-closed (shared across tools)
+.claude/hooks/preflight.py sandbox gate: present AND working, fail-closed (shared)
 .claude/hooks/guard.py    session budget + opt-in accident catcher (shared; config at the top)
 .claude/hooks/trace.py    audit trail (shared across tools)
 .claude/hooks/format.py   auto-format on write (PostToolUse; best-effort)
@@ -255,9 +255,10 @@ Test all three without a model in the loop:
 python3 .claude/hooks/test_guard.py  .claude/hooks/guard.py   # 40 behavioural cases
 python3 .claude/hooks/test_policy.py .claude/settings.json    # sandbox + rules present
 python3 .claude/hooks/test_docs.py   .                        # instruction-layer consistency
+python3 .claude/hooks/test_preflight.py .claude/hooks/preflight.py  # fake bwrap on PATH
 ```
 
-All three run in CI on every push and PR (`.github/workflows/harness.yml`).
+All four run in CI on every push and PR (`.github/workflows/harness.yml`).
 `test_docs.py` is the least obvious: it checks what rots silently — the
 always-loaded context staying under ~200 lines, the README's own line count
 matching reality, skills naming only commands the sandbox permits, every skill
@@ -399,8 +400,21 @@ sandbox settings were written against Anthropic's own example config but never
 executed. Two caveats used to sit here bare; both now have a resolution in
 `docs/porting-enforcement.md`:
 
-- **Sandbox fail-open.** If the sandbox can't start (WSL1, native Windows, or a
-  missing `bwrap`/`socat` on Linux/WSL2) it can silently fail open.
+- **Sandbox fail-open.** If the sandbox can't start (WSL1, native Windows, a
+  missing `bwrap`/`socat`, or a `bwrap` that is installed but cannot create its
+  user namespace) it can silently fail open. That last case is the one a
+  `which` check misses and the one this repo actually hit, so preflight *runs*
+  `bwrap --unshare-all --ro-bind / / --dev /dev true` rather than only looking
+  for the binary. The `--unshare-all` matters: an earlier version of this probe
+  omitted it, passed on a machine where every real Bash call died at
+  `/proc/self/uid_map`, and so reproduced the fail-open one step later. On
+  failure the probe retries the plain form to classify the cause — plain-works
+  means the namespaces are refused (a nested sandbox), plain-fails-too means
+  bwrap cannot create a user namespace at all. A definitive non-zero exit
+  blocks; an indeterminate result (timeout) warns — refuse only a clear-cut
+  absence, the same rule that already governs macOS and native Windows. The
+  success path prints a line too, so silence never has to be read as a green
+  light.
   `.claude/hooks/preflight.py` runs at session start and **stops the session**
   when the boundary would be absent — fail-closed, with `HARNESS_SKIP_PREFLIGHT=1`
   to opt out when you're isolated externally. It complements
@@ -550,6 +564,39 @@ called out in the *Troubleshooting* row above) — or when the session is itself
 running inside an outer sandbox/container that doesn't grant nested
 user-namespace creation (`enableWeakerNestedSandbox: false` here rules out
 silently working around that).
+
+**Measured on the affected machine** (host shell, same user the agent runs as,
+WSL2, bubblewrap 0.11.1):
+
+```
+bwrap --unshare-all --ro-bind / / --dev /dev true   -> 0
+/proc/sys/user/max_user_namespaces                  -> 62699
+/proc/self/uid_map                                  -> 0 0 4294967295
+kernel.unprivileged_userns_clone                    -> does not exist
+kernel.apparmor_restrict_unprivileged_userns        -> does not exist
+systemd-detect-virt                                 -> wsl
+```
+
+That rules out the causes this section originally guessed at. Neither sysctl
+exists, the namespace budget is untouched, and `uid_map` shows the initial user
+namespace with a full identity map — the shell is not nested. bwrap creates a
+fully unshared sandbox on demand. Whatever breaks the Bash tool is therefore
+**not** a kernel or distro restriction; it is something about how the CLI
+invokes bwrap, or what it invokes it inside.
+
+`preflight.py` cannot see this. It is a SessionStart hook — a direct child of
+the CLI, outside the Bash sandbox path — so its probe measures the same thing
+the host shell measures, and gets the same 0. An earlier version of that probe
+omitted `--unshare-all`, which was a genuine bug (it would have passed even on
+a kernel-restricted machine) and is fixed; but fixing it did not make preflight
+able to detect *this* failure, and the success message now says so rather than
+implying a certificate it cannot issue.
+
+The practical exposure here is not a silent fail-open — the first Bash call
+fails loudly. It is the pairing: every sandboxed command dies while every
+`sandbox.excludedCommands` entry still runs, unsandboxed. Shrinking that list is
+the mitigation; `guard.py`'s chaining check keeps the entries that must stay
+from carrying anything else out with them.
 
 Not yet root-caused against a live machine in this environment (would need
 `sysctl kernel.unprivileged_userns_clone kernel.apparmor_restrict_unprivileged_userns`

@@ -29,6 +29,11 @@ jobs:
       - name: Guard behaviour (accident catcher, budget, sandbox escape)
         run: python3 .claude/hooks/test_guard.py .claude/hooks/guard.py
 
+      # Uses fake bwrap binaries on PATH — no real sandbox needed, and the
+      # runner's own bwrap state cannot make this pass or fail by accident.
+      - name: Preflight (fails closed on a broken sandbox, not just a missing one)
+        run: python3 .claude/hooks/test_preflight.py .claude/hooks/preflight.py
+
       # Both files carry the boundary — this repo's own, and the one every
       # consumer copies. A boundary that only holds here is worth little.
       - name: Policy (sandbox settings + permission rules)
