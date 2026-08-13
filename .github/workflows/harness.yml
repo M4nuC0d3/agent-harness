@@ -1,0 +1,76 @@
+name: harness
+
+# The repo's own thesis is that enforcement beats instructions. Until this
+# existed, the enforcement tests were themselves unenforced: three suites in
+# .claude/hooks/ that nothing ran. Every check below corresponds to a bug that
+# actually shipped here.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hooks:
+    name: hook behaviour + policy + docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The hooks are stdlib-only by design — no install step, and CI would
+      # catch it if that ever stopped being true.
+      - name: Guard behaviour (accident catcher, budget, sandbox escape)
+        run: python3 .claude/hooks/test_guard.py .claude/hooks/guard.py
+
+      # Both files carry the boundary — this repo's own, and the one every
+      # consumer copies. A boundary that only holds here is worth little.
+      - name: Policy (sandbox settings + permission rules)
+        run: |
+          python3 .claude/hooks/test_policy.py .claude/settings.json
+          python3 .claude/hooks/test_policy.py settings.consumer.example.json
+
+      - name: Instruction layer (context budget, skills, roles, packaging)
+        run: python3 .claude/hooks/test_docs.py .
+
+      # A malformed manifest makes the plugin fail to load — silently, from the
+      # user's point of view. Cheap to check, expensive to discover downstream.
+      - name: JSON and TOML parse
+        run: |
+          python3 - <<'PY'
+          import glob, json, sys, tomllib
+          bad = []
+          for f in glob.glob(".claude*/**/*.json", recursive=True) + glob.glob(".c*/*.json"):
+              try:
+                  json.load(open(f))
+              except Exception as e:
+                  bad.append(f"{f}: {e}")
+          for f in glob.glob(".codex/**/*.toml", recursive=True):
+              try:
+                  tomllib.load(open(f, "rb"))
+              except Exception as e:
+                  bad.append(f"{f}: {e}")
+          print("\n".join(bad) or "all manifests parse")
+          sys.exit(1 if bad else 0)
+          PY
+
+  plugin:
+    name: claude plugin validate
+    runs-on: ubuntu-latest
+    # Non-blocking: the validator ships with the CLI and its checks move faster
+    # than this repo. Treat a failure here as a signal to read the output, not
+    # as a broken build.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install -g @anthropic-ai/claude-code
+      - run: claude plugin validate .

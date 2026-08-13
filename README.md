@@ -23,12 +23,46 @@ already knows how to read.
 
 ## Install
 
-Copy into the root of the project you want to work in:
+[#install](#install)
 
-```bash
+**As a plugin (recommended).** The roles, skills and hooks are versioned and
+update in place:
+
+```
+/plugin marketplace add M4nuC0d3/agent-harness
+/plugin install agent-harness@m4nuc0d3-harness
+```
+
+Then copy **`settings.consumer.example.json`** into your project as
+`.claude/settings.json`. **A plugin cannot carry sandbox or permission
+settings** — those are project settings, not plugin components — so that one
+file is still a copy, and it is the file that holds the actual boundary. It also
+registers the marketplace, so anyone who trusts the project folder is prompted
+to install the plugin.
+
+> **Copy the consumer example, not this repo's `.claude/settings.json`.** They
+> are deliberately different. This repo *develops* the hooks, so its file wires
+> them from the working tree and does not install the plugin. A consumer gets
+> the hooks *from* the plugin, so its file has no `hooks` block at all. Copying
+> the wrong one gives you either every hook firing twice — halving the tool-call
+> budget and doubling every trace line — or a `hooks` block pointing at
+> `.claude/hooks/*.py` files your project doesn't have, which no-op silently.
+> And an absent `PreToolUse` hook blocks nothing. `test_docs.py` asserts the
+> split, and that the `sandbox` and `permissions` blocks stay byte-identical
+> between the two.
+
+Bump `version` in `.claude-plugin/plugin.json` on every release; without a bump,
+installed copies keep the cached version and never see your changes.
+
+**By copying (no plugin support, or you want to fork it).**
+
+```
 cp -r AGENTS.md CLAUDE.md GEMINI.md .geminiignore \
       .claude/ .codex/ .cursor/ docs/ evals/ /path/to/your-project/
 ```
+
+Copies drift and have no update path — that is the trade-off, and it is why the
+plugin route exists.
 
 `.codex/` and `.cursor/` wire the same enforcement into Codex and Cursor; drop
 them if you only use Claude Code. `.codex/agents/*.toml` additionally gives
@@ -136,11 +170,19 @@ CLAUDE.md                 3 lines + Claude specifics; imports AGENTS.md
 GEMINI.md                 3 lines + Gemini specifics; imports AGENTS.md
 .claude/agents/*.md       the three role prompts for Claude Code
                           (YAML frontmatter for Claude Code; other tools read past it)
-.claude/settings.json     sandbox + permission rules + hook registration (Claude Code)
+.claude/settings.json     sandbox + permissions + hooks — for THIS repo (dev)
+settings.consumer.example.json  what a consuming project copies: same boundary,
+                          no hooks (the plugin brings them), plus the plugin
+                          registration. Kept in sync by test_docs.py.
 .claude/hooks/preflight.py sandbox-prerequisite gate, fail-closed (shared across tools)
 .claude/hooks/guard.py    session budget + opt-in accident catcher (shared; config at the top)
 .claude/hooks/trace.py    audit trail (shared across tools)
-.claude/hooks/test_*.py   the tests below
+.claude/hooks/format.py   auto-format on write (PostToolUse; best-effort)
+.claude/hooks/test_*.py   the three suites below, run in CI
+.claude/skills/*/SKILL.md on-demand workflows, loaded on description match
+.claude-plugin/plugin.json      makes this installable + updatable as a plugin
+.claude-plugin/marketplace.json the catalog `/plugin marketplace add` reads
+.github/workflows/harness.yml   runs the three suites on every push and PR
 .codex/config.toml        Codex sandbox + approval policy + [agents] switch
 .codex/agents/*.toml      the three roles as native Codex sub-agents (own copy;
                           same responsibilities as .claude/agents/*.md)
@@ -192,21 +234,36 @@ Concretely, `.claude/settings.json` enables the sandbox with
 `allowUnsandboxedCommands: false` — closing the escape hatch that would let a
 failed command retry outside the boundary — denies reads of `~/.ssh` and
 `~/.aws`, and restricts network egress to an allowlist. Permission rules deny
-secrets, `curl`, `wget` and `sudo`, gate `WebFetch` behind a domain allowlist,
-and prompt on `git push`, `rm -rf`, `terraform`, `kubectl`.
+secrets, `curl`, `wget` and `sudo`, pre-approve a small `WebFetch` allowlist and
+prompt for every other domain (see *Known issue: WebFetch*), and prompt on
+`git push`, `rm -rf`, `terraform`, `kubectl`.
 
 **Bash patterns are not a security control.** Arguments can be reordered,
 variables expanded, wrappers used. That is why the guard's denylist is labelled
 an *accident catcher* (`ACCIDENT_CATCHER = False` disables it) and why `curl` is
-denied outright rather than pattern-matched. The hook exists for the two things
-rules cannot do: count tool calls per session, and write an audit trace.
+denied outright rather than pattern-matched.
 
-Test both without a model in the loop:
+The hook exists for the three things rules cannot do: count tool calls per
+session, write an audit trace, and refuse a sandbox-excluded command that
+carries other commands with it (*Known issue: `excludedCommands`*). That last
+one is enforceable — unlike the accident catcher — precisely because it matches
+on *shape* (is anything chained?) rather than on intent (is this dangerous?).
+
+Test all three without a model in the loop:
 
 ```bash
-python .claude/hooks/test_guard.py  .claude/hooks/guard.py     # 24 behavioural cases
-python .claude/hooks/test_policy.py .claude/settings.json      # sandbox + rules present
+python3 .claude/hooks/test_guard.py  .claude/hooks/guard.py   # 40 behavioural cases
+python3 .claude/hooks/test_policy.py .claude/settings.json    # sandbox + rules present
+python3 .claude/hooks/test_docs.py   .                        # instruction-layer consistency
 ```
+
+All three run in CI on every push and PR (`.github/workflows/harness.yml`).
+`test_docs.py` is the least obvious: it checks what rots silently — the
+always-loaded context staying under ~200 lines, the README's own line count
+matching reality, skills naming only commands the sandbox permits, every skill
+having loadable frontmatter, Claude Code and Codex defining the same roles, and
+the plugin manifest pointing at paths that exist. Every one of those checks is
+a bug that shipped here.
 
 The guard denies only catastrophic targets (`rm -rf /`, `~`, `$HOME`, `*`) and
 *asks* for everyday deletes like `rm -rf node_modules`. A guard that blocks real
@@ -261,6 +318,13 @@ keep the root small, which is what keeps it read.
 Beyond what's already wired, these are the agentic-coding habits current practice
 converges on. Optional and opinionated — adopt what fits.
 
+- **Ship it as a plugin, not a copy.** `.claude-plugin/` makes this repo
+installable via `/plugin marketplace add` and updatable via `/plugin update`.
+Copies have no update path; a plugin has a `version` field that is the update
+signal, so bump it on every release. The one thing a plugin *cannot* carry is
+`.claude/settings.json` — sandbox and permission rules are project settings, not
+plugin components — which is worth knowing before you assume the boundary
+travels with the install.
 - **Push repeated workflows into skills, not this file.** On-demand context
   (loaded only when its description matches) keeps the always-loaded memory lean
   — the same reason the root nearly blew the ~200-line budget. Four are wired in
@@ -375,7 +439,7 @@ yet been verified on other platforms (native Linux, macOS/Seatbelt) or with
 other AI coding tools (Codex, Gemini CLI), so treat it as scoped to that combo
 until someone confirms otherwise.
 
-Workaround: Sandbox exclude Docker, Maven and NPM 
+Workaround: Sandbox exclude Docker, Maven and NPM
 "excludedCommands": ["docker *", "mvn *", "npm *"]
 
 (This list has since grown for an unrelated reason — see the next section and
@@ -455,7 +519,16 @@ allowlist, no `~/.ssh`/`~/.aws` deny. This is the same class of gap
 denylist ("Bash patterns are not a security control") — it turns out to apply
 to `excludedCommands` too.
 
-**Resolution:** `"git *"` was removed from `excludedCommands` again
+**Resolution (two parts).** First, `.claude/hooks/guard.py` now blocks any
+command line that *starts with* an excluded prefix **and** contains a chain or
+substitution operator (`;`, `&&`, `||`, `|`, `$(`, backtick, newline). Chaining
+is the entire exploit, so refusing the chained form closes it without giving up
+the exclusions that keep Maven, npm and Docker working while `bwrap` is broken.
+The prefixes are read from `settings.json`, so the two cannot drift, and
+`test_guard.py` covers the cases — including that a *non*-excluded command
+chains freely, since both halves stay sandboxed and there is nothing to protect.
+
+Second, `"git *"` was removed from `excludedCommands` again
 (confirmed `git status` goes back to failing at the sandbox boundary rather
 than silently escaping it). `find`/`ls`/`grep`/`mvn`/`npm`/`docker` stay
 excluded — they're read-only or need registry/daemon access anyway, so the
@@ -484,8 +557,9 @@ and `bwrap --version`, which the same broken Bash can't run — check these from
 outside the agent session). Environment: Claude Code, WSL2. Treat as scoped to
 that combo until confirmed elsewhere.
 
-Until resolved: expect `researcher`/`implementer`/`evaluator` verification
-steps that rely on Bash (running tests, `git diff`, `git status`) to fail or
-fall back to `Read`-only inspection — `find`/`ls`/`grep` now work directly,
-and `mvn`/`npm`/`docker` cover builds and tests, but there is still no working
-`git` in this session.
+Until the `bwrap` failure itself is fixed: expect Bash-dependent verification
+to stay limited. `find`/`ls`/`grep` work directly and `mvn`/`npm`/`docker` cover
+builds and tests, but there is no working `git`, and the guard now refuses to
+let any of those carry a second command past the boundary — so
+`mvn verify | tee log` has to be two calls. That is the intended trade-off: a
+slightly noisier day in exchange for no silent escape.

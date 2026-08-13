@@ -56,3 +56,29 @@ check on things you can point at in the diff (file count, does it touch
 report, and a fabricated-looking number like `0.93` is worse than no number:
 it invites trusting a judgment that was never made. If the call is genuinely
 unclear, say so in prose and default to the plain pipeline.
+
+## Why not Agent Teams?
+
+Claude Code shipped Agent Teams in February 2026: a flat group of full sessions
+coordinating through a shared task list and direct messaging, rather than a
+hierarchy reporting to one coordinator. The fan-out described above — parallel
+focus-scoped evaluators plus a synthesis step — is the shape Agent Teams
+handles natively, so the obvious question is why this harness hand-rolls it.
+
+Three reasons, all of which may expire:
+
+- **It is experimental and off by default** (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`),
+  with known limitations around session resumption and shutdown. This harness's
+  premise is that the enforcement layer holds; an experimental coordination
+  layer underneath it is the wrong place to spend that confidence.
+- **Token cost.** Teams use substantially more than a single session with
+  sub-agents. The decision matrix already treats fan-out as the exception
+  because it eats the `guard.py` session ceiling; teams make that worse.
+- **The `skills` and `mcpServers` frontmatter fields of a sub-agent definition
+  do not apply when the same definition runs as a teammate.** The roles here
+  deliberately `Read` `AGENTS.md` and the matching `SKILL.md` as plain files
+  rather than relying on skill loading, so they survive that difference — but it
+  is a real behavioural gap to check before porting anything.
+
+Revisit when teams leave research preview. The role prompts are plain markdown
+and would drop in; what would change is the topology, not the responsibilities.

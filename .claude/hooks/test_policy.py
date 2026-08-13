@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Tests for the generated `.claude/settings.json`.
+"""Tests for a settings file that carries the boundary.
 
 When enforcement moved out of the hook and into declarative rules and the
 sandbox, the protection had to *move*, not disappear. This asserts it did.
 
-    python .claude/hooks/test_policy.py .claude/settings.json
+Runs against either of the two files that carry it — this repo's own, and the
+example every consumer copies. A boundary that only holds in the source repo is
+worth very little.
+
+    python3 .claude/hooks/test_policy.py .claude/settings.json
+    python3 .claude/hooks/test_policy.py settings.consumer.example.json
 """
 from __future__ import annotations
 
@@ -71,8 +76,18 @@ def main() -> int:
                 any("rm -rf" in r for r in ask))
 
     print("\nThe hook still covers what rules cannot:")
-    ok &= check("PreToolUse hook registered (session budget)", "PreToolUse" in hooks)
-    ok &= check("PostToolUse hook registered (audit trace)", "PostToolUse" in hooks)
+    # Hooks arrive one of two ways: wired here (this repo, which develops them)
+    # or carried by the plugin (a consumer, whose project has no .claude/hooks/).
+    # Requiring both would be wrong; requiring neither would let a file ship with
+    # no session budget and no trace at all.
+    via_plugin = bool(s.get("enabledPlugins"))
+    source = "the plugin" if via_plugin else "this file"
+    ok &= check(f"PreToolUse hook comes from {source} (session budget)",
+                "PreToolUse" in hooks or via_plugin,
+                "no hooks block and no plugin — nothing counts tool calls")
+    ok &= check(f"PostToolUse hook comes from {source} (audit trace)",
+                "PostToolUse" in hooks or via_plugin,
+                "no hooks block and no plugin — nothing writes the trace")
 
     print()
     print("settings.json checks passed" if ok else "settings.json FAILED")

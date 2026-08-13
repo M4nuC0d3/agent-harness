@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "extraKnownMarketplaces": {
+    "m4nuc0d3-harness": {
+      "source": {
+        "source": "github",
+        "repo": "M4nuC0d3/agent-harness"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "agent-harness@m4nuc0d3-harness": true
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "autoAllowBashIfSandboxed": false,
+    "allowUnsandboxedCommands": false,
+    "excludedCommands": ["docker *", "mvn *", "npm *", "find *", "ls *", "grep *"],
+    "enableWeakerNestedSandbox": false,
+    "network": {
+      "allowedDomains": [
+        "registry.npmjs.org",
+        "*.npmjs.org",
+        "repo.maven.apache.org",
+        "repo1.maven.org",
+        "pypi.org",
+        "*.pythonhosted.org",
+        "crates.io",
+        "github.com",
+        "*.githubusercontent.com"
+      ],
+      "allowUnixSockets": ["/var/run/docker.sock"],
+      "allowAllUnixSockets": false,
+      "allowLocalBinding": false
+    },
+    "filesystem": {
+      "denyRead": [
+        "~/.ssh",
+        "~/.aws",
+        "~/.config/gh",
+        "~/.netrc",
+        "~/.gnupg",
+        "~/.docker"
+      ],
+      "allowWrite": []
+    }
+  },
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(**/*credentials*)",
+      "Edit(./.env)",
+      "Edit(./.env.*)",
+      "Edit(./secrets/**)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(sudo:*)",
+      "Bash(gh pr merge:*)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(rm -rf:*)",
+      "Bash(terraform:*)",
+      "Bash(kubectl:*)",
+      "Bash(npm publish:*)",
+      "WebFetch"
+    ],
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:docs.claude.com)"
+    ]
+  }
+}

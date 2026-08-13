@@ -1,0 +1,17 @@
+{
+  "name": "m4nuc0d3-harness",
+  "description": "Agent harness: a coordinator, three roles, and an enforcement layer.",
+  "owner": {
+    "name": "M4nuC0d3",
+    "url": "https://github.com/M4nuC0d3"
+  },
+  "plugins": [
+    {
+      "name": "agent-harness",
+      "source": "./",
+      "description": "Coordinator + researcher/implementer/evaluator, a session budget, an accident catcher that closes the excludedCommands chaining hole, and an audit trace.",
+      "category": "workflow",
+      "tags": ["agents", "subagents", "enforcement", "quarkus", "angular"]
+    }
+  ]
+}
