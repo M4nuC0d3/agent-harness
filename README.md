@@ -181,6 +181,7 @@ settings.consumer.example.json  what a consuming project copies: same boundary,
 .claude/hooks/test_*.py   the three suites below, run in CI
 .claude/skills/*/SKILL.md on-demand workflows, loaded on description match
 .claude-plugin/plugin.json      makes this installable + updatable as a plugin
+                          (`agents` takes FILE paths, `skills` takes directories)
 .claude-plugin/marketplace.json the catalog `/plugin marketplace add` reads
 .github/workflows/harness.yml   runs the three suites on every push and PR
 .codex/config.toml        Codex sandbox + approval policy + [agents] switch

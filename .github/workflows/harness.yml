@@ -68,10 +68,15 @@ jobs:
   plugin:
     name: claude plugin validate
     runs-on: ubuntu-latest
-    # Non-blocking: the validator ships with the CLI and its checks move faster
-    # than this repo. Treat a failure here as a signal to read the output, not
-    # as a broken build.
-    continue-on-error: true
+    # This was `continue-on-error: true`, which was a mistake: the job failed,
+    # the run reported Success, and the only sign was a red annotation on a
+    # green build. A check that shows red without failing trains you to ignore
+    # red — the opposite of what this repo is for. It gates now.
+    #
+    # The validator ships with the CLI and its checks move faster than this
+    # repo, so it can break on an upstream change rather than on yours. That is
+    # a real cost, and the right response is to read the output and fix or pin,
+    # not to make the signal advisory.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

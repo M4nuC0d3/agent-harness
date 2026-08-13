@@ -8,9 +8,22 @@
   },
   "homepage": "https://github.com/M4nuC0d3/agent-harness",
   "repository": "https://github.com/M4nuC0d3/agent-harness",
-  "keywords": ["agents", "subagents", "enforcement", "sandbox", "quarkus", "angular"],
-  "agents": ["./.claude/agents/"],
-  "skills": ["./.claude/skills/"],
+  "keywords": [
+    "agents",
+    "subagents",
+    "enforcement",
+    "sandbox",
+    "quarkus",
+    "angular"
+  ],
+  "agents": [
+    "./.claude/agents/evaluator.md",
+    "./.claude/agents/implementer.md",
+    "./.claude/agents/researcher.md"
+  ],
+  "skills": [
+    "./.claude/skills/"
+  ],
   "hooks": {
     "SessionStart": [
       {
