@@ -143,6 +143,48 @@ def main() -> int:
           declared == on_disk,
           f"declared {declared}, on disk {on_disk}")
 
+    print("\nCodex plugin packaging:")
+    codex_plugin = json.loads(read(".codex-plugin/plugin.json"))
+    codex_market = json.loads(read(".agents/plugins/marketplace.json"))
+    check("Codex plugin.json declares a name and version",
+          bool(codex_plugin.get("name")) and bool(codex_plugin.get("version")),
+          "without a version bump, installed copies never update")
+    # Two manifests, one release. Bumping only one ships an update to half the
+    # installs and leaves the other half on a cached copy that looks current.
+    check("both plugin manifests carry the same version",
+          codex_plugin.get("version") == plugin.get("version"),
+          f"Codex {codex_plugin.get('version')} vs Claude {plugin.get('version')}")
+    codex_listed = [p["name"] for p in codex_market.get("plugins", [])]
+    check("Codex marketplace lists the plugin",
+          codex_plugin.get("name") in codex_listed, f"lists {codex_listed}")
+    # In a repo that has both, Codex reads BOTH catalogs: .agents/plugins/ and,
+    # legacy-compatible, .claude-plugin/marketplace.json. The install cache is
+    # keyed by marketplace name (~/.codex/plugins/cache/$MARKETPLACE/$PLUGIN/
+    # $VERSION/), so equal names put two different metadata sets in one
+    # directory and which one wins is undefined.
+    check("the two marketplaces have different names",
+          codex_market.get("name") != market.get("name"),
+          f"both are {market.get('name')!r} — one cache path, two catalogs")
+    # `skills` is ONE directory path in the Codex manifest, an array in Claude's.
+    skills_rel = codex_plugin.get("skills")
+    check(f"Codex plugin.json skills path exists: {skills_rel}",
+          isinstance(skills_rel, str)
+          and (ROOT / skills_rel.removeprefix("./")).is_dir(),
+          "a string directory path, not an array — the skills would not load")
+    # The install cache (~/.codex/plugins/cache/) is not a git checkout, so the
+    # git-root path .codex/hooks.json uses resolves to nothing there. The hook
+    # then no-ops, and an absent PreToolUse hook blocks nothing.
+    codex_hooks = read("hooks/hooks.json")
+    check("plugin hooks anchor on ${PLUGIN_ROOT}, not the git root",
+          "PLUGIN_ROOT" in codex_hooks and "rev-parse" not in codex_hooks,
+          "hooks would not resolve from the plugin install cache")
+    referenced = sorted(set(re.findall(r"\.claude/hooks/\w+\.py", codex_hooks)))
+    check("plugin hooks register the three shared scripts",
+          len(referenced) == 3, f"registers {referenced}")
+    for rel in referenced:
+        check(f"plugin hook script exists: {rel}", (ROOT / rel).exists(),
+              "the hook would silently no-op")
+
     print("\nThe two settings files, and the line between them:")
     # This repo is the plugin *source*: it runs the hooks from the working tree.
     # Registering the plugin here too would load a second copy of the same four

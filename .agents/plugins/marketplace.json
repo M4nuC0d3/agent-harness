@@ -1,0 +1,20 @@
+{
+  "name": "m4nuc0d3-harness-codex",
+  "interface": {
+    "displayName": "M4nuC0d3 Harness"
+  },
+  "plugins": [
+    {
+      "name": "agent-harness",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
