@@ -178,12 +178,12 @@ settings.consumer.example.json  what a consuming project copies: same boundary,
 .claude/hooks/guard.py    session budget + opt-in accident catcher (shared; config at the top)
 .claude/hooks/trace.py    audit trail (shared across tools)
 .claude/hooks/format.py   auto-format on write (PostToolUse; best-effort)
-.claude/hooks/test_*.py   the three suites below, run in CI
+.claude/hooks/test_*.py   the five suites below, run in CI
 .claude/skills/*/SKILL.md on-demand workflows, loaded on description match
 .claude-plugin/plugin.json      makes this installable + updatable as a plugin
                           (`agents` takes FILE paths, `skills` takes directories)
 .claude-plugin/marketplace.json the catalog `/plugin marketplace add` reads
-.github/workflows/harness.yml   runs the three suites on every push and PR
+.github/workflows/harness.yml   runs all five suites on every push and PR
 .codex/config.toml        Codex sandbox + approval policy + [agents] switch
 .codex/agents/*.toml      the three roles as native Codex sub-agents (own copy;
                           same responsibilities as .claude/agents/*.md)
@@ -257,9 +257,10 @@ python3 .claude/hooks/test_guard.py  .claude/hooks/guard.py   # 40 behavioural c
 python3 .claude/hooks/test_policy.py .claude/settings.json    # sandbox + rules present
 python3 .claude/hooks/test_docs.py   .                        # instruction-layer consistency
 python3 .claude/hooks/test_preflight.py .claude/hooks/preflight.py  # fake bwrap on PATH
+python3 .claude/hooks/test_trace.py  .claude/hooks/trace.py   # trace format is stable
 ```
 
-All four run in CI on every push and PR (`.github/workflows/harness.yml`).
+All five run in CI on every push and PR (`.github/workflows/harness.yml`).
 `test_docs.py` is the least obvious: it checks what rots silently — the
 always-loaded context staying under ~200 lines, the README's own line count
 matching reality, skills naming only commands the sandbox permits, every skill
