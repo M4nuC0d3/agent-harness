@@ -53,6 +53,51 @@ Two things to know:
   like every hook, it is a guardrail, not a boundary: the model can write and
   execute a script to sidestep a command matcher. The sandbox is the boundary.
 
+### Shipping it as a Codex plugin
+
+`.codex/` is the *copy* route. The *install* route is a plugin, and it needs its
+own hook registration — not because the hooks differ, but because the paths do.
+
+- **`.codex-plugin/plugin.json`** — the manifest. `skills` takes a single
+  directory path (Claude's takes an array); there is no `agents` field, so the
+  roles in `.codex/agents/*.toml` do not ship with the plugin and stay a copy.
+- **`.agents/plugins/marketplace.json`** — the repo marketplace
+  `codex plugin marketplace add M4nuC0d3/agent-harness` reads. Codex also reads
+  `.claude-plugin/marketplace.json` as a legacy-compatible source, so both are
+  discoverable; only the Codex one carries `policy` and `category`.
+- **`hooks/hooks.json`** — the default plugin hook file, so no `hooks` entry in
+  the manifest is needed. It registers the same `preflight.py` / `guard.py` /
+  `trace.py`, but resolves them via **`${PLUGIN_ROOT}`**. `.codex/hooks.json`
+  uses `$(git rev-parse --show-toplevel)`, which is correct for a checkout and
+  wrong for an install: plugins live in `~/.codex/plugins/cache/…`, which is not
+  a git repository. Codex also sets `CLAUDE_PLUGIN_ROOT` for compatibility.
+
+Three consequences:
+
+- **Never both.** A project that copies `.codex/` *and* installs the plugin runs
+  every hook twice — half the tool-call budget, doubled trace lines, silently.
+  Same trap as `.claude/settings.json` vs. the consumer example, with one
+  difference: that one is assertable (`enabledPlugins` is in the repo), this one
+  is not. Codex keeps the enabled state in `~/.codex/config.toml`, user-level,
+  so no check in this repo can see it — including for this repo itself, where
+  `.codex/hooks.json` and an installed `hooks/hooks.json` would both fire.
+- **Two catalogs, two names.** Codex reads `.agents/plugins/marketplace.json`
+  and, legacy-compatible, `.claude-plugin/marketplace.json`, so this repo is
+  discoverable twice. The install cache is keyed by marketplace name
+  (`~/.codex/plugins/cache/$MARKETPLACE_NAME/$PLUGIN_NAME/$VERSION/`), so the two
+  must not share one: equal names mean one directory holding two different sets
+  of metadata, with no documented winner. Hence `m4nuc0d3-harness-codex`, and a
+  `test_docs.py` check that they stay distinct.
+- **Trust is separate from install.** Plugin-bundled hooks are non-managed:
+  Codex skips them until the user reviews and trusts the definition. An
+  installed-but-untrusted plugin has no hook layer at all.
+- **`guard.py`'s chaining check no-ops here.** It reads `excludedCommands` from
+  the project's `.claude/settings.json`; a Codex-only project has none, so the
+  prefix list is empty and the check skips (fail-open, as its header documents).
+  Nothing is lost — the hole it closes is specific to Claude Code's
+  `excludedCommands`, which Codex has no equivalent of. The budget, the accident
+  catcher and the trace are unaffected.
+
 Optional extra: `codex execpolicy` `.rules` (Starlark) give per-command
 allow/prompt/block, the closest match to `settings.json`'s `deny`/`ask` command
 lists. Test rules with `codex execpolicy check --rules <file> -- <command>`.
