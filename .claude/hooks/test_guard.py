@@ -10,6 +10,7 @@ covered by `permissions.deny` — asserted in test_policy.py.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -46,6 +47,22 @@ CASES = [
     # git push is an `ask` permission rule, not a hook decision.
     ("Bash", {"command": "git push origin feature"}, "pass"),
 
+    # --- excludedCommands chaining: the sandbox escape (see guard docstring) ---
+    # An excluded command alone is fine — it is excluded on purpose.
+    ("Bash", {"command": "mvn verify"}, "pass"),
+    ("Bash", {"command": "npm ci"}, "pass"),
+    ("Bash", {"command": "grep -rn foo src/"}, "pass"),
+    # ...but chaining carries the rest of the line out of the sandbox with it.
+    ("Bash", {"command": "mvn verify; whoami"}, "deny"),
+    ("Bash", {"command": "mvn -v && cat /etc/hostname"}, "deny"),
+    ("Bash", {"command": "docker ps | grep x"}, "deny"),
+    ("Bash", {"command": "ls -la $(cat /etc/passwd)"}, "deny"),
+    # A NON-excluded command chains freely: both halves stay sandboxed, so
+    # there is nothing for this check to protect.
+    ("Bash", {"command": "echo hi; whoami"}, "pass"),
+    # Word-boundary: `mvnw` is not `mvn`, and is not excluded.
+    ("Bash", {"command": "./mvnw verify; whoami"}, "pass"),
+
     # --- files: the hook no longer looks. `permissions.deny` covers these. ---
     ("Write", {"file_path": "/app/.env"}, "pass"),
     ("Edit", {"file_path": "config/secrets/db.yml"}, "pass"),
@@ -67,8 +84,16 @@ CURSOR_CASES = [
 ]
 
 
+# guard.py reads sandbox.excludedCommands from settings.json, resolved against
+# CLAUDE_PROJECT_DIR. Pin it to the repo root (two levels above this file) so the
+# chaining cases below hold no matter where the suite is invoked from.
+PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
+ENV = {**os.environ, "CLAUDE_PROJECT_DIR": str(PROJECT_DIR)}
+
+
 def _run_guard(payload: str) -> str:
-    p = subprocess.run([sys.executable, str(GUARD)], input=payload, capture_output=True, text=True)
+    p = subprocess.run([sys.executable, str(GUARD)], input=payload,
+                       capture_output=True, text=True, env=ENV)
     if p.returncode == 2:
         return "deny"
     if p.returncode == 0 and p.stdout.strip():

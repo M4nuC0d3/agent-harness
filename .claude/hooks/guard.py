@@ -9,6 +9,10 @@ Layering (as Anthropic documents it):
                paths, domains and whole tools.
   this hook    a session budget, plus an opt-in accident catcher.
 
+It also closes one hole the sandbox itself leaves open: `excludedCommands` is a
+prefix match on the whole shell line, so anything chained after an excluded
+command escapes with it. See check_excluded_chaining.
+
 What this hook deliberately does NOT do:
 
   * Guard file writes. `Write`/`Edit` expose the same surface to a hook as to an
@@ -103,6 +107,54 @@ ACCIDENT_PATTERNS = [
     r"curl\b[^|]*\|\s*(ba)?sh",                 # curl | sh
     r">\s*\.env",                               # clobbering secrets
 ]
+
+# Close the excludedCommands chaining hole. `sandbox.excludedCommands` is a
+# prefix match on the WHOLE shell line, not a per-command allowlist: anything
+# chained after a match runs unsandboxed too — no write restriction, no network
+# allowlist, no ~/.ssh deny. Reproduced in the README (*Known issue:
+# excludedCommands matches the whole shell line*).
+#
+# This is the one thing permission rules cannot express and the sandbox itself
+# gets wrong, which is exactly the hook's remit. When a line starts with an
+# excluded prefix AND contains a chain or substitution operator, block it and
+# tell the model to split it. Splitting is the sanctioned remedy, not a
+# workaround: each half is then judged on its own.
+#
+# The prefixes are read from settings.json so there is one source of truth. If
+# that read fails this check is skipped (fail-open) — it is defence in depth
+# against an upstream bug, not the boundary, and a hook that hard-blocks every
+# command because a config file moved is worse than the hole it closes.
+CHECK_EXCLUDED_CHAINING = True
+SETTINGS_PATH = Path(".claude/settings.json")
+# `;` `&&` `||` `|` `$(...)` and backticks all carry the rest of the line past
+# the boundary. Newlines too — a heredoc body or a multi-line command.
+CHAIN_OPERATORS = re.compile(r"[;\n]|&&|\|\||\||\$\(|`")
+
+
+def excluded_prefixes() -> list[str]:
+    """Command prefixes that skip the sandbox, from settings.json.
+
+    Returns [] on any read/parse failure — see CHECK_EXCLUDED_CHAINING.
+    """
+    root = os.environ.get("CLAUDE_PROJECT_DIR") or "."
+    path = Path(root) / SETTINGS_PATH
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    excluded = (data.get("sandbox") or {}).get("excludedCommands") or []
+    prefixes = []
+    for entry in excluded:
+        if not isinstance(entry, str):
+            continue
+        # "mvn *" -> "mvn", "docker *" -> "docker"
+        head = entry.split("*", 1)[0].strip()
+        if head:
+            prefixes.append(head)
+    return prefixes
+
 
 # ───────────────────────────────────────────────────────────────────────────
 
@@ -282,6 +334,28 @@ def check_accidents(cmd: str) -> None:
             )
 
 
+def check_excluded_chaining(cmd: str) -> None:
+    """Block a sandbox-excluded command that carries other commands with it."""
+    if not CHECK_EXCLUDED_CHAINING or not cmd:
+        return
+    stripped = cmd.lstrip()
+    for prefix in excluded_prefixes():
+        if not stripped.startswith(prefix):
+            continue
+        # Match on a word boundary: "mvn" must not match "mvnw" or "mvnd".
+        rest = stripped[len(prefix):]
+        if rest and not rest[0].isspace():
+            continue
+        if CHAIN_OPERATORS.search(cmd):
+            block(
+                f"'{prefix}' skips the sandbox (sandbox.excludedCommands), and "
+                "that exclusion applies to the WHOLE line — anything chained "
+                "after it would also run unsandboxed. Run the commands as "
+                "separate calls instead; splitting is the fix, not a workaround."
+            )
+        return
+
+
 def main() -> None:
     raw = sys.stdin.read()
     try:
@@ -294,7 +368,9 @@ def main() -> None:
         return
 
     check_budget(str(event.get("session_id", "")))
-    check_accidents(extract_command(event))
+    cmd = extract_command(event)
+    check_accidents(cmd)
+    check_excluded_chaining(cmd)
     allow_silently()
 
 

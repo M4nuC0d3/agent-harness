@@ -1,0 +1,58 @@
+{
+  "name": "agent-harness",
+  "description": "A coordinator plus three roles (researcher, implementer, evaluator) with a session budget, an accident catcher and an audit trace. Model-agnostic instructions; enforcement wired for Claude Code.",
+  "version": "0.1.0",
+  "author": {
+    "name": "M4nuC0d3",
+    "url": "https://github.com/M4nuC0d3"
+  },
+  "homepage": "https://github.com/M4nuC0d3/agent-harness",
+  "repository": "https://github.com/M4nuC0d3/agent-harness",
+  "keywords": ["agents", "subagents", "enforcement", "sandbox", "quarkus", "angular"],
+  "agents": ["./.claude/agents/"],
+  "skills": ["./.claude/skills/"],
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/.claude/hooks/preflight.py\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/.claude/hooks/guard.py\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/.claude/hooks/trace.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/.claude/hooks/format.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
