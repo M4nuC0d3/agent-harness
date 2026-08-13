@@ -44,6 +44,12 @@ jobs:
       - name: Instruction layer (context budget, skills, roles, packaging)
         run: python3 .claude/hooks/test_docs.py .
 
+      # The trace is the one hook output other tooling reads back, and it was
+      # the only hook with no suite at all — the same "tests that nothing runs"
+      # gap this workflow exists to close.
+      - name: Trace format (envelope, back-compat fields, never leaks values)
+        run: python3 .claude/hooks/test_trace.py .claude/hooks/trace.py
+
       # A malformed manifest makes the plugin fail to load — silently, from the
       # user's point of view. Cheap to check, expensive to discover downstream.
       - name: JSON and TOML parse
