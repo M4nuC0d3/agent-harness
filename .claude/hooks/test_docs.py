@@ -131,6 +131,17 @@ def main() -> int:
         for rel in plugin.get(field, []):
             check(f"plugin.json {field} path exists: {rel}",
                   (ROOT / rel.removeprefix("./")).exists(), "component would silently not load")
+    # `agents` takes FILE paths (`skills` takes directories). Omitting it or
+    # pointing it at a directory both pass `claude plugin validate` — the first
+    # falls back to a default scan of ./agents/, which does not exist here — so
+    # the roles would simply not ship. Validation green, feature absent. Pin the
+    # list to what is actually on disk instead.
+    declared = sorted(plugin.get("agents", []))
+    on_disk = sorted(f"./.claude/agents/{p.name}"
+                     for p in (ROOT / ".claude/agents").glob("*.md"))
+    check("plugin.json ships exactly the roles that exist",
+          declared == on_disk,
+          f"declared {declared}, on disk {on_disk}")
 
     print("\nThe two settings files, and the line between them:")
     # This repo is the plugin *source*: it runs the hooks from the working tree.
