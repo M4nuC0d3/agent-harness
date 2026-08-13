@@ -51,8 +51,56 @@ to install the plugin.
 > split, and that the `sandbox` and `permissions` blocks stay byte-identical
 > between the two.
 
-Bump `version` in `.claude-plugin/plugin.json` on every release; without a bump,
-installed copies keep the cached version and never see your changes.
+**As a Codex plugin.** The same skills and the same hook scripts, packaged the
+way Codex installs them:
+
+```
+codex plugin marketplace add M4nuC0d3/agent-harness
+```
+
+Then open the Plugins directory, pick **M4nuC0d3 Harness**, install *Agent
+Harness*, and copy **`.codex/config.toml`** and **`.codex/agents/*.toml`** into
+your project. Two things a Codex plugin cannot carry, and both are the same shape
+as the `.claude/settings.json` gap above: the sandbox and approval policy are
+project settings, and the documented Codex manifest has no `agents` field — so
+the three roles do not travel as native sub-agents. Copying `.codex/` supplies
+both.
+
+> **Installing is not trusting.** Codex skips plugin-bundled hooks until you
+> review and trust the hook definition. Until you do, the session budget, the
+> accident catcher and the audit trace are all absent — and an absent
+> `PreToolUse` hook blocks nothing. Same failure mode as a missing `python3`,
+> different cause. The sandbox and `approval_policy` from `.codex/config.toml`
+> are unaffected; they never depended on the hooks.
+
+Codex also reads `.claude-plugin/marketplace.json` as a legacy-compatible
+catalog, so this repo can appear **twice** in the directory — once as *M4nuC0d3
+Harness*, once under the raw name `m4nuc0d3-harness`. Same plugin; only the
+Codex entry carries `policy` and `category`. The two catalogs deliberately
+carry different names (`m4nuc0d3-harness-codex` for Codex): the install cache
+is keyed by marketplace name, so equal names would put two different sets of
+metadata in one directory. `test_docs.py` asserts they stay different.
+
+> **Developing on this repo? Then don't also have the plugin installed.** The
+> working tree registers the hooks through `.codex/hooks.json`; the plugin
+> registers the same three through `hooks/hooks.json`. Both fire, so every hook
+> runs twice — half the tool-call budget, doubled trace lines, silently. The
+> Claude-side version of this trap is assertable, because `enabledPlugins` lives
+> in `.claude/settings.json`, in the repo. This one is not: Codex keeps the
+> enabled state in `~/.codex/config.toml`, user-level, where no test in this
+> repo can see it. `/plugins` shows you what is installed.
+
+One behavioural difference worth knowing: `guard.py`'s excluded-command chaining
+check reads its prefixes from the consuming project's `.claude/settings.json`. A
+Codex-only project doesn't have one, so that check reads no prefixes and skips
+itself — by design (it fails open; see the header of `guard.py`). It closes a
+hole specific to Claude Code's `excludedCommands`, which Codex has no equivalent
+of. The session budget, the accident catcher and the trace all still run.
+
+Bump `version` in **both** `.claude-plugin/plugin.json` and
+`.codex-plugin/plugin.json` on every release; without a bump, installed copies
+keep the cached version and never see your changes. `test_docs.py` asserts the
+two numbers stay equal — one release, one number.
 
 **By copying (no plugin support, or you want to fork it).**
 
@@ -183,6 +231,13 @@ settings.consumer.example.json  what a consuming project copies: same boundary,
 .claude-plugin/plugin.json      makes this installable + updatable as a plugin
                           (`agents` takes FILE paths, `skills` takes directories)
 .claude-plugin/marketplace.json the catalog `/plugin marketplace add` reads
+.codex-plugin/plugin.json the same, for Codex (`skills` takes ONE directory path;
+                          there is no `agents` field, so the roles stay a copy)
+.agents/plugins/marketplace.json the catalog `codex plugin marketplace add` reads
+hooks/hooks.json          Codex plugin hook registration → the same three
+                          scripts, resolved via ${PLUGIN_ROOT} (the install
+                          cache is not a git checkout, so the git-root path
+                          .codex/hooks.json uses would not resolve there)
 .github/workflows/harness.yml   runs the three suites on every push and PR
 .codex/config.toml        Codex sandbox + approval policy + [agents] switch
 .codex/agents/*.toml      the three roles as native Codex sub-agents (own copy;
@@ -321,12 +376,14 @@ Beyond what's already wired, these are the agentic-coding habits current practic
 converges on. Optional and opinionated — adopt what fits.
 
 - **Ship it as a plugin, not a copy.** `.claude-plugin/` makes this repo
-installable via `/plugin marketplace add` and updatable via `/plugin update`.
+installable via `/plugin marketplace add` and updatable via `/plugin update`;
+`.codex-plugin/` plus `.agents/plugins/marketplace.json` do the same for Codex.
 Copies have no update path; a plugin has a `version` field that is the update
-signal, so bump it on every release. The one thing a plugin *cannot* carry is
-`.claude/settings.json` — sandbox and permission rules are project settings, not
-plugin components — which is worth knowing before you assume the boundary
-travels with the install.
+signal, so bump it on every release — in both manifests. The one thing neither
+plugin format *can* carry is the boundary: `.claude/settings.json` and
+`.codex/config.toml` are project settings, not plugin components. Codex adds a
+second gap, the sub-agent definitions, which its manifest has no field for.
+Worth knowing before you assume the boundary travels with the install.
 - **Push repeated workflows into skills, not this file.** On-demand context
   (loaded only when its description matches) keeps the always-loaded memory lean
   — the same reason the root nearly blew the ~200-line budget. Four are wired in
