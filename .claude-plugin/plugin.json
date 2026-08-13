@@ -1,7 +1,7 @@
 {
   "name": "agent-harness",
   "description": "A coordinator plus three roles (researcher, implementer, evaluator) with a session budget, an accident catcher and an audit trace. Model-agnostic instructions; enforcement wired for Claude Code.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": {
     "name": "M4nuC0d3",
     "url": "https://github.com/M4nuC0d3"

@@ -174,7 +174,28 @@ def main() -> int:
     # The install cache (~/.codex/plugins/cache/) is not a git checkout, so the
     # git-root path .codex/hooks.json uses resolves to nothing there. The hook
     # then no-ops, and an absent PreToolUse hook blocks nothing.
-    codex_hooks = read("hooks/hooks.json")
+    #
+    # This file lives at .codex-plugin/hooks.json, not the repo-root
+    # hooks/hooks.json — that path is Claude Code's own default plugin-hook
+    # location (docs/en/plugins-reference), and hooks merge across sources
+    # rather than the manifest's inline "hooks" replacing it. A root-level
+    # hooks/hooks.json written for Codex (${PLUGIN_ROOT}) would load a SECOND
+    # time under Claude Code, where ${PLUGIN_ROOT} is never set — it resolves
+    # empty, and every hook command runs against /.claude/hooks/*.py instead
+    # of the plugin's real install directory.
+    check("Codex plugin.json points hooks at a file that exists",
+          codex_plugin.get("hooks") == "./hooks.json"
+          and (ROOT / ".codex-plugin/hooks.json").exists(),
+          "no hooks entry, or it points nowhere — Codex would fall back to "
+          "the repo-root hooks/hooks.json default location, which collides "
+          "with Claude Code's own")
+    check("no repo-root hooks/hooks.json shadows Claude Code's default hook path",
+          not (ROOT / "hooks/hooks.json").exists(),
+          "Claude Code auto-discovers hooks/hooks.json in the plugin root "
+          "and merges it with plugin.json's inline hooks — a Codex-only file "
+          "there double-registers guard.py etc. with an unresolved "
+          "${PLUGIN_ROOT}")
+    codex_hooks = read(".codex-plugin/hooks.json")
     check("plugin hooks anchor on ${PLUGIN_ROOT}, not the git root",
           "PLUGIN_ROOT" in codex_hooks and "rev-parse" not in codex_hooks,
           "hooks would not resolve from the plugin install cache")

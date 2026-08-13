@@ -1,6 +1,6 @@
 {
   "name": "agent-harness",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A coordinator plus three roles (researcher, implementer, evaluator) with a session budget, an accident catcher and an audit trace. Model-agnostic instructions; enforcement wired for Codex.",
   "author": {
     "name": "M4nuC0d3",
@@ -17,6 +17,7 @@
     "angular"
   ],
   "skills": "./.claude/skills/",
+  "hooks": "./hooks.json",
   "interface": {
     "displayName": "Agent Harness",
     "shortDescription": "Coordinator + three roles, with enforcement that holds when instructions don't.",
