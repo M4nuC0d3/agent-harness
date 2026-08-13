@@ -18,6 +18,10 @@ You receive exactly ONE scoped subtask and possibly evaluator feedback from a
 previous attempt.
 When invoked:
 1. Read only the files relevant to this subtask.
+   Before writing code in a package, also read the nearest AGENTS.md
+   (for example `backend/AGENTS.md`) and any `.claude/skills/*/SKILL.md`
+   matching what you are about to do. These are plain files — read them
+   directly rather than relying on any skill-loading mechanism.
 2. Make the smallest change that fully satisfies the subtask's definition of
    done.
    Do not expand scope.
@@ -50,7 +54,8 @@ Return concisely:
   The files, classes, functions, components, APIs, or other relevant units
   that were changed.
 - VERIFICATION:
-  The exact command(s) you ran and their relevant result.
+  The exact command(s) you ran and their relevant result, plus the convention
+  files you read in step 1, or "none applicable".
 You run in your own context window.
 The coordinator sees ONLY your final SUMMARY / CHANGES / VERIFICATION output,
 so it must stand on its own.

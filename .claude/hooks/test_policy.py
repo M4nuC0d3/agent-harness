@@ -56,8 +56,15 @@ def main() -> int:
     ok &= check("secrets: secrets/ is denied", any("secrets" in r for r in deny))
     ok &= check("bash network tools denied (URL patterns are unreliable)",
                 any(r.startswith("Bash(curl") for r in deny) and any(r.startswith("Bash(wget") for r in deny))
-    ok &= check("WebFetch is deny-all + explicit allowlist",
-                "WebFetch(domain:*)" in deny and any(r.startswith("WebFetch(domain:") for r in allow))
+    # NOT deny-all: rules resolve deny > ask > allow, first match wins, and a
+    # deny takes no allowlist exception -- so "WebFetch(domain:*)" in deny would
+    # have killed the allowlist below rather than narrowing it. Unlisted domains
+    # prompt the human instead; the hard egress boundary is the sandbox
+    # allowlist, which is asserted separately above.
+    ok &= check("WebFetch: unlisted domains prompt, listed ones are pre-approved",
+                "WebFetch" in ask and any(r.startswith("WebFetch(domain:") for r in allow))
+    ok &= check("no WebFetch deny-all (it cannot be narrowed by an allow)",
+                not any(r.startswith("WebFetch") for r in deny))
     ok &= check("irreversible git/infra commands prompt the human",
                 any("git push" in r for r in ask))
     ok &= check("recursive rm prompts rather than being silently allowed",

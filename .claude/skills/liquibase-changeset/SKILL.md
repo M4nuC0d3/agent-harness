@@ -14,7 +14,7 @@ existing one, wired into the master changelog.
 - Add a new changeset with a unique, stable id and include it in the master
   changelog.
 - Provide a rollback where practical.
-- Verify it applies (`./mvnw quarkus:dev` runs Liquibase on startup, or run the
+- Verify it applies (`mvn quarkus:dev` runs Liquibase on startup, or run the
   Liquibase goal) and that the integration tests still bring the schema up.
 
 ## Gotchas

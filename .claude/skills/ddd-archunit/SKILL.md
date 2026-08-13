@@ -5,7 +5,7 @@ description: Use before finishing any backend change, or when adding or moving c
 
 # DDD / ArchUnit check
 
-The DDD layering is enforced by ArchUnit, run as part of `./mvnw verify`. This is
+The DDD layering is enforced by ArchUnit, run as part of `mvn verify`. This is
 the checklist before you call backend work done.
 
 Goal: the architecture tests pass for the right reasons — not because a rule was

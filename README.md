@@ -263,16 +263,20 @@ converges on. Optional and opinionated — adopt what fits.
 
 - **Push repeated workflows into skills, not this file.** On-demand context
   (loaded only when its description matches) keeps the always-loaded memory lean
-  — the same reason the root nearly blew the ~200-line budget. Three are wired in
+  — the same reason the root nearly blew the ~200-line budget. Four are wired in
   `.claude/skills/` (Claude Code): `openapi-client`, `liquibase-changeset`,
-  `ddd-archunit`. Add your own for any workflow you'd otherwise explain twice.
+  `ddd-archunit`, `quarkus-testing`. Add your own for any workflow you'd
+  otherwise explain twice.
 - **Auto-format on write.** Wired as `.claude/hooks/format.py` (PostToolUse):
   Prettier for `frontend/**`, google-java-format for `backend/**` Java, both only
   if installed. Best-effort and non-blocking; Spotless/Prettier in `verify` stay
   the source of truth. Remove the PostToolUse entry to disable it.
 - **Demand evidence, not assertions.** "It works" is not a result. The evaluator
   already verifies; have it *show* the command it ran and the test summary (a
-  screenshot for UI) so a human can trust a verdict without re-running it.
+  screenshot for UI) so a human can trust a verdict without re-running it. It
+  also names the convention files it read: a skill loads only when its
+  description matches, so the evaluator reads `backend/AGENTS.md` and the
+  relevant `SKILL.md` as plain files rather than assuming the implementer did.
 - **Context hygiene.** `/clear` between unrelated tasks, and compact *before*
   ~50% rather than letting it auto-compact (the model is weakest mid-compaction).
   After two failed corrections, start fresh from `PROGRESS.md` instead of pushing
@@ -301,7 +305,7 @@ converges on. Optional and opinionated — adopt what fits.
 | Heredocs (`<< EOF`) fail | A known sandbox limitation: the shell needs a temp file. Write the file, then run it. |
 | The guard blocks something legitimate | Move it out of `ACCIDENT_PATTERNS` and add a `Bash(...)` **ask** rule in `.claude/settings.json`. Don't disable the sandbox. |
 | Every Bash command fails with `apply-seccomp: write /proc/self/uid_map: Operation not permitted` | `bwrap` itself can't start — see *Known issue: bwrap can't create its user namespace* below. Only commands listed in `sandbox.excludedCommands` in `.claude/settings.json` (currently `docker *`, `mvn *`, `npm *`, `find *`, `ls *`, `grep *`), which skip the sandbox wrapper entirely, still run; everything else — including `echo` and `git` — is blocked at the boundary, not by a permission rule. **Don't "fix" this by adding more entries to `excludedCommands`** — see *Known issue: `excludedCommands` matches the whole shell line* below before touching that list. |
-| Context feels bloated | `AGENTS.md` is 160 lines; Claude Code sees ~199 — just under Anthropic's ~200 guideline. Stack detail lives in the nested `backend/` / `frontend/` `AGENTS.md` (loaded only in-tree), and repeated workflows belong in skills or `.claude/rules/*.md` (see *Recommendations*), not here. `@path` imports do **not** reduce context — they load at launch. |
+| Context feels bloated | `AGENTS.md` is 167 lines; with `CLAUDE.md` Claude Code sees 199 — just under Anthropic's ~200 guideline. Re-measure with `cat CLAUDE.md AGENTS.md \| wc -l` after editing either; the number above goes stale silently. Stack detail lives in the nested `backend/` / `frontend/` `AGENTS.md` (loaded only in-tree), and repeated workflows belong in `.claude/skills/` (see *Recommendations*), not here. `@path` imports do **not** reduce context — they load at launch. |
 
 ## Known gaps
 
@@ -376,6 +380,30 @@ Workaround: Sandbox exclude Docker, Maven and NPM
 
 (This list has since grown for an unrelated reason — see the next section and
 the current `excludedCommands` value in `.claude/settings.json`.)
+
+#### Known issue: a `WebFetch` deny-all cannot be narrowed by an allowlist
+
+[#known-issue-webfetch](#known-issue-webfetch)
+
+`permissions.deny` previously held `WebFetch(domain:*)` alongside three
+`WebFetch(domain:…)` entries in `allow`, the intent being "deny everything except
+these". That is not expressible. Rules resolve **`deny` → `ask` → `allow`, first
+match wins**, and a `deny` takes no allowlist exception — so either the wildcard
+matched (and the `researcher`'s `WebFetch` tool was dead, every fetch refused) or
+it matched nothing (and there was no boundary at all). Both are silent, and
+`test_policy.py` passed either way, because it only asserted the two strings were
+present — a rule green for the wrong reason, exactly what the *Evals* section
+warns about.
+
+Resolved by dropping the deny and putting bare `WebFetch` in `ask`: unlisted
+domains prompt the human, the three listed ones are pre-approved, and the hard
+egress boundary stays where it always was — `sandbox.network.allowedDomains`,
+which applies to Bash and its children regardless of these rules.
+`test_policy.py` now asserts the absence of a `WebFetch` deny.
+
+Not verified against a live CLI (see *Verify before trusting*): whether a bare
+`ask` entry short-circuits the more specific `allow` entries is untested here.
+If it does, the allowlist costs an extra prompt but denies nothing.
 
 #### Known issue: bwrap can't create its user namespace (all sandboxed Bash fails)
 

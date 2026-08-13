@@ -88,6 +88,20 @@ contract defines a different error schema).
 - Config in `application.properties` with `%dev` / `%test` / `%prod` profiles.
   No secrets in the repo — env vars only (see the root rules and `.gitignore`).
 - Logging via JBoss Logging (`io.quarkus.logging.Log`), never `System.out`.
+- **Constructor injection, never `@Inject` on a field.** Final fields plus
+  Lombok's `@RequiredArgsConstructor`; Quarkus uses the single parameterised
+  constructor automatically. Enforced by ArchUnit (`noFields().should()
+  .beAnnotatedWith(Inject.class)`), so a field injection fails `verify`.
+- **Entity ↔ DTO mapping only via MapStruct** — `componentModel = JAKARTA_CDI`,
+  `injectionStrategy = CONSTRUCTOR`. `-Amapstruct.unmappedTargetPolicy=ERROR` is
+  set globally, so a forgotten field breaks the build instead of mapping `null`.
+  `*MapperImpl` lives in `target/generated-sources/annotations` — read it when a
+  mapping misbehaves, never write or commit it.
+- **Lombok stays off persistence entities.** `@Data` / `@EqualsAndHashCode`
+  break against Hibernate proxies and lazy collections. In `annotationProcessor
+  Paths`, order is significant: `lombok` → `lombok-mapstruct-binding` →
+  `mapstruct-processor`, or MapStruct won't see Lombok's accessors and emits
+  empty mappers.
 - Formatting is enforced in `verify` by **Spotless**, configured to run
   **google-java-format** — the same formatter the auto-format-on-write hook
   (`.claude/hooks/format.py`) applies to `backend/**` Java. Settled here so it

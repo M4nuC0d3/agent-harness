@@ -6,41 +6,32 @@ The coordinator instructions and role definitions live in `AGENTS.md`:
 
 ## Claude Code specifics
 
-Sub-agents are in `.claude/agents/*.md`. Delegate explicitly:
-*"Use the `implementer` subagent on: \<subtask\>"*. Sub-agents cannot spawn
-sub-agents — all branching goes through you. For independent graph nodes
-(AGENTS.md's decision matrix), dispatch several instances of the same role in
-one message rather than one at a time, and give each its own git worktree
-(`isolation: "worktree"`) when they'd otherwise touch the same files. Cap
-parallel instances at what you can actually review, ~2-3.
+Sub-agents are in `.claude/agents/*.md`. Delegate explicitly: *"Use the
+`implementer` subagent on: \<subtask\>"*. Sub-agents cannot spawn sub-agents —
+all branching goes through you. Dispatch independent instances of one role in a
+single message, each with its own git worktree (`isolation: "worktree"`) when
+they'd touch the same files. Cap parallelism at what you can review, ~2-3.
 
-**Enforcement**, in `.claude/settings.json`, layered as Anthropic documents it:
+**Enforcement** is specified in `AGENTS.md` (*Hard rules*) and configured in
+`.claude/settings.json`. Only the Claude-Code-specific mechanics are here:
 
-1. **Sandbox** (`/sandbox`) — OS-level isolation of Bash *and its children*:
-   writes limited to the working directory, network to an allowlist, `~/.ssh`
-   and `~/.aws` denied. `allowUnsandboxedCommands: false` means a command that
-   fails under the sandbox cannot retry outside it. macOS uses Seatbelt; Linux
-   and WSL2 use `bubblewrap` + `socat`. **WSL1 and native Windows have no
-   sandbox** — on Windows run inside WSL2 (setup in the README's *Prerequisites*).
-2. **Permission rules** — reliable for paths, domains and whole tools. Not for
-   Bash *arguments*: those are string matches and are trivially evaded, which is
-   why `curl`/`wget` are denied outright and fetching goes through
-   `WebFetch(domain:…)` rules.
-3. **Hooks** — only what the above cannot express: a per-session tool-call
-   ceiling and an audit trace. Hooks run before the permission check, so a hook
-   `deny` holds even under `--dangerously-skip-permissions`; a hook `allow` can
-   never loosen a `deny`.
+- Hooks run **before** the permission check, so a hook `deny` holds even under
+  `--dangerously-skip-permissions`; a hook `allow` never loosens a `deny`.
+- Rules evaluate `deny` → `ask` → `allow`, first match wins. A `deny` takes no
+  allowlist exception — which is why WebFetch is gated with `ask`, not a
+  deny-all (README, *Known issue: WebFetch*).
+- Sandbox: Seatbelt on macOS, `bubblewrap` + `socat` on Linux/WSL2, **absent on
+  WSL1 and native Windows**. `/sandbox` lists missing dependencies.
+- `managed-settings.example.json`, deployed to the system path, makes a `deny`
+  unoverridable org-wide.
 
-The bash denylist in `.claude/hooks/guard.py` is an **accident catcher, not a
-boundary** (`ACCIDENT_CATCHER = False` turns it off). For org-wide lockdown,
-deploy `managed-settings.example.json`: a managed `deny` cannot be overridden.
+**Model steering:** the `model:` field per sub-agent (`opus` | `sonnet` |
+`haiku` | full id | `inherit`) — read-only research cheap, implementation
+balanced, the evaluator's judgment strongest. `CLAUDE_CODE_SUBAGENT_MODEL`
+overrides all at once. Restart the session after editing an agent file on disk.
 
-**Model steering:** the `model:` field in each sub-agent's frontmatter
-(`opus` | `sonnet` | `haiku` | full id | `inherit`). The defaults already match
-cost to task difficulty — `haiku` for read-only research, `sonnet` for
-implementation, `opus` for the evaluator's judgment; tune per role to trade spend
-against rigor. `CLAUDE_CODE_SUBAGENT_MODEL` overrides all of them at once. After editing an agent file on disk, restart the
-session; agents created via `/agents` apply immediately.
+**Skills** (`.claude/skills/`) load only when their description matches, so they
+cost nothing until used. A workflow you would explain twice belongs there, not
+in this file or `AGENTS.md` — that is what keeps the always-loaded context lean.
 
-For programmatic, unattended runs use the **Claude Agent SDK** — the Claude Code
-harness as a library — rather than a hand-written orchestrator.
+For unattended runs use the **Claude Agent SDK**, not a hand-written orchestrator.

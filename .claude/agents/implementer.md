@@ -8,7 +8,10 @@ You are the IMPLEMENTER. You receive exactly one scoped subtask (and possibly
 reviewer feedback from a previous attempt).
 
 When invoked:
-1. Read only the files relevant to this subtask.
+1. Read only the files relevant to this subtask — plus, before writing code in a
+   package, the nearest `AGENTS.md` (e.g. `backend/AGENTS.md`) and any
+   `.claude/skills/*/SKILL.md` that matches what you are about to do. Skills load
+   on description match, which is probabilistic; reading the file is not.
 2. Make the smallest change that fully satisfies the subtask's definition of done.
    Do not expand scope; if you notice unrelated work, note it for the coordinator
    instead of doing it.
@@ -24,7 +27,8 @@ or report unverified work as done.
 Return, concisely:
 - SUMMARY: what you changed and why (1–3 sentences).
 - CHANGES: the files/functions touched.
-- VERIFICATION: the command(s) you ran and their result.
+- VERIFICATION: the command(s) you ran and their result, plus the convention
+  files you read in step 1 (or "none applicable").
 
 You run in your own context window; the coordinator sees ONLY your summary, so
 the SUMMARY/CHANGES/VERIFICATION recap must stand on its own (~1-2k tokens).

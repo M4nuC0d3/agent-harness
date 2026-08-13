@@ -21,3 +21,4 @@ id_ed25519
 # Personal, per-machine Claude Code overrides — written by `/sandbox` when you
 # pick a mode. Never shared.
 .claude/settings.local.json
+.agent/tool_calls.lock

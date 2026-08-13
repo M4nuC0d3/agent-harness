@@ -43,12 +43,29 @@ When invoked:
    - verify the ArchUnit and integration suite
    Any drift between contract and code, or a hand-edit to a generated file,
    is a FAIL.
+5. Load the conventions. Do not recall them.
+   Before judging code in a package, read:
+   - the nearest AGENTS.md, for example `backend/AGENTS.md`
+   - every `.claude/skills/*/SKILL.md` whose description matches the change:
+     `quarkus-testing` for tests, `ddd-archunit` for layering,
+     `liquibase-changeset` for schema, `openapi-client` for the contract
+   These are plain files; read them directly rather than relying on any
+   skill-loading mechanism. The implementer may never have seen them — you are
+   the layer that does not depend on that. Check the change against what those
+   files actually say, not against your prior.
+6. Judge the REASON a check passed.
+   A green build that went green because a rule was weakened, a test deleted,
+   or an assertion loosened is a FAIL, not a pass.
+   Name which rule moved and what it protected.
 Return your verdict in EXACTLY this shape:
 - VERDICT: PASS | FAIL
 - SCORE: a number from 0.0 to 1.0
 - EVIDENCE: the command(s) you actually ran and their key result, for example
   the test summary. This must provide enough proof that the verdict can be
   trusted without re-running it.
+  Also name the convention files you read in step 5, or "none applicable".
+  An empty list on a `backend/**` change means you skipped the check;
+  go back and do it.
 - FINDINGS: for each issue include:
   - file:line
   - the problem
