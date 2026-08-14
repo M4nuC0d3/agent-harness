@@ -8,37 +8,116 @@ enforcement layer stops the accidents that instructions alone cannot.
 No runtime, no orchestrator, no API keys, no build step. Just files your agent
 already knows how to read.
 
+**This repo is a worked example, not a skeleton.** The harness is generic; the
+project it is pointed at is a demo — a Quarkus/Angular monorepo — and lives
+entirely under **`example/`**, plus one marked block in `AGENTS.md`. Everything
+else is stack-agnostic. Adopting it for your own project means replacing that
+block, deleting `example/`, and repointing one JSON file: **`docs/adopt.md`**.
+
+## Where project information lives
+
+Four places, and deliberately no fifth:
+
+| What | Where | Read by |
+|---|---|---|
+| Facts that hold repo-wide | the `HARNESS:PROJECT` block in `AGENTS.md` | Claude Code + Codex |
+| Build, tests, conventions per package | `<pkg>/AGENTS.md` | both — with a caveat |
+| A workflow you'd explain twice | a skill | Claude Code, Codex (plugin) |
+| Which formatter runs where | `.claude/format.map.json` | `format.py` |
+
+Read by Claude Code and Codex, in that column, means *verified* there. Other
+tools read the same `AGENTS.md` and get the same facts; the caveats below are
+written for the two primary ones because those are the ones held to them.
+
+The block is **inline on purpose**. The tidy-looking alternative —
+`@docs/project.md` — silently breaks Codex: Claude Code resolves `@path`
+imports, Codex has no import directive at all (openai/codex#17401), so half the
+instruction layer would go missing in one tool and nothing would say so.
+`test_docs.py` fails the build on an `@import` inside `AGENTS.md`.
+
+### How the two levels compose
+
+The root block is **inherited**: it applies in every package, and a nested
+`AGENTS.md` adds to it rather than replacing it. Where both speak to the same
+point the **closest file wins**, so a nested file *narrows* a root rule and never
+restates it — restating is how the two drift apart with nobody editing either.
+
+One asymmetry decides the borderline cases. Claude Code loads a nested file when
+it touches that subtree; Codex builds its chain from the repo root down to the
+*working directory* and may never reach a package file in a root-launched session
+(openai/codex#13288). Inheritance downward is reliable, discovery upward is not —
+so a rule an agent must never miss belongs in the root block even when it feels
+package-specific.
+
+`docs/adopt.md` has the line-by-line test for what goes where.
+
 ## Works with
 
-| Tool | Reads | Native sub-agents? |
-|---|---|---|
-| **Codex** (ChatGPT) | `AGENTS.md` | yes: `.codex/agents/*.toml` |
-| **Claude Code** | `CLAUDE.md` → imports `AGENTS.md` | yes: `.claude/agents/*.md` |
-| **Gemini CLI** | `GEMINI.md` → imports `AGENTS.md` | no — adopt the role inline |
-| **Mistral Vibe** | `AGENTS.md` | yes, but not wired here (see Known gaps) |
-| **Cursor, Copilot, Aider, Zed, ZCode, Jules, …** | `AGENTS.md` | varies |
+**Claude Code and Codex.** Both read the same `AGENTS.md`, get the same three
+roles as native sub-agents, and run the same three hook scripts — so behaviour
+and enforcement are identical across them, and CI keeps them in step.
+
+| Tool | Reads | Sub-agents | Enforcement |
+|---|---|---|---|
+| **Claude Code** | `CLAUDE.md` → imports `AGENTS.md` | `.claude/agents/*.md` | `.claude/settings.json` + hooks |
+| **Codex** | `AGENTS.md` | `.codex/agents/*.toml` | `.codex/config.toml` + hooks |
 
 `AGENTS.md` is an open format stewarded by the Agentic AI Foundation and read by
-20+ agents. Everything else imports it.
+20+ agents, so any other tool that reads it gets the instructions, the loop and
+the roles for free. It gets **none of the enforcement**: the sandbox, the
+permission rules and the hooks below are wired for these two only. Elsewhere the
+boundary is yours to provide — an OS-level sandbox plus that tool's own
+permission model. Nothing here configures it and nothing here is tested against
+it.
 
 ## Install
 
 [#install](#install)
 
-**As a plugin (recommended).** The roles, skills and hooks are versioned and
-update in place:
+Installing is always two parts, whichever route you take. A plugin can carry
+**executable components** — sub-agents, skills, hooks. It cannot carry
+**instruction files** or **settings**: a `CLAUDE.md` at a plugin root is not
+loaded as project context, and sandbox and permission rules are project
+settings. So three files always live in your repo:
+
+| | Comes from | Why it can't be the other way |
+|---|---|---|
+| the three roles, as sub-agents | plugin | — |
+| `preflight.py`, `guard.py`, `trace.py` | plugin | — |
+| skills | plugin | — |
+| `AGENTS.md` + `CLAUDE.md` | **your repo** | must be always-loaded, and one block in it is yours to edit |
+| `.claude/settings.json` | **your repo** | the sandbox and permission rules are project settings |
+| `.codex/config.toml` (Codex only) | **your repo** | same, in Codex's vocabulary |
+
+The plugin is an *install* — versioned, cached, refreshed on a version bump. The
+repo files are *inherited* — merged along the directory hierarchy at load time.
+Different mechanisms with different failure modes: a missing repo file is
+obvious immediately, a stale plugin version is not.
+
+### Route 1: plugin + three files (recommended)
+
+The roles, skills and hooks are versioned and update in place:
 
 ```
 /plugin marketplace add M4nuC0d3/agent-harness
 /plugin install agent-harness@m4nuc0d3-harness
 ```
 
-Then copy **`settings.consumer.example.json`** into your project as
-`.claude/settings.json`. **A plugin cannot carry sandbox or permission
-settings** — those are project settings, not plugin components — so that one
-file is still a copy, and it is the file that holds the actual boundary. It also
-registers the marketplace, so anyone who trusts the project folder is prompted
-to install the plugin.
+Then add the three files the plugin cannot carry:
+
+```
+# from a checkout of this repo
+cp AGENTS.md CLAUDE.md /path/to/your-project/
+cp settings.consumer.example.json /path/to/your-project/.claude/settings.json
+cp .codex/config.toml /path/to/your-project/.codex/       # Codex only
+```
+
+Then **replace the `HARNESS:PROJECT` block** in the copied `AGENTS.md` — that is
+the one edit that makes the harness yours, and `docs/adopt.md` walks it through.
+Everything outside the two markers stays as copied.
+
+`settings.consumer.example.json` also registers the marketplace, so anyone who
+trusts the project folder is prompted to install the plugin.
 
 > **Copy the consumer example, not this repo's `.claude/settings.json`.** They
 > are deliberately different. This repo *develops* the hooks, so its file wires
@@ -51,20 +130,16 @@ to install the plugin.
 > split, and that the `sandbox` and `permissions` blocks stay byte-identical
 > between the two.
 
-**As a Codex plugin.** The same skills and the same hook scripts, packaged the
-way Codex installs them:
+**On the Codex side**, the same skills and hook scripts install with:
 
 ```
 codex plugin marketplace add M4nuC0d3/agent-harness
 ```
 
-Then open the Plugins directory, pick **M4nuC0d3 Harness**, install *Agent
-Harness*, and copy **`.codex/config.toml`** and **`.codex/agents/*.toml`** into
-your project. Two things a Codex plugin cannot carry, and both are the same shape
-as the `.claude/settings.json` gap above: the sandbox and approval policy are
-project settings, and the documented Codex manifest has no `agents` field — so
-the three roles do not travel as native sub-agents. Copying `.codex/` supplies
-both.
+Then open the Plugins directory, pick **M4nuC0d3 Harness** and install *Agent
+Harness*. Copy the whole of **`.codex/`**: its manifest has no `agents` field, so
+unlike Claude Code the three roles do *not* travel with the install, and
+`config.toml` carries the boundary.
 
 > **Installing is not trusting.** Codex skips plugin-bundled hooks until you
 > review and trust the hook definition. Until you do, the session budget, the
@@ -74,11 +149,9 @@ both.
 > are unaffected; they never depended on the hooks.
 
 Codex also reads `.claude-plugin/marketplace.json` as a legacy-compatible
-catalog, so this repo can appear **twice** in the directory — once as *M4nuC0d3
-Harness*, once under the raw name `m4nuc0d3-harness`. Same plugin; only the
-Codex entry carries `policy` and `category`. The two catalogs deliberately
-carry different names (`m4nuc0d3-harness-codex` for Codex): the install cache
-is keyed by marketplace name, so equal names would put two different sets of
+catalog, so this repo can appear **twice** in the directory. The two catalogs
+carry deliberately different names (`m4nuc0d3-harness-codex` for Codex): the
+install cache is keyed by marketplace name, so equal names would put two sets of
 metadata in one directory. `test_docs.py` asserts they stay different.
 
 > **Developing on this repo? Then don't also have the plugin installed.** The
@@ -90,43 +163,56 @@ metadata in one directory. `test_docs.py` asserts they stay different.
 > enabled state in `~/.codex/config.toml`, user-level, where no test in this
 > repo can see it. `/plugins` shows you what is installed.
 
-One behavioural difference worth knowing: `guard.py`'s excluded-command chaining
-check reads its prefixes from the consuming project's `.claude/settings.json`. A
-Codex-only project doesn't have one, so that check reads no prefixes and skips
-itself — by design (it fails open; see the header of `guard.py`). It closes a
-hole specific to Claude Code's `excludedCommands`, which Codex has no equivalent
-of. The session budget, the accident catcher and the trace all still run.
+One behavioural difference: `guard.py`'s chaining check reads its prefixes from
+the project's `.claude/settings.json`, which a Codex-only project doesn't have —
+so it reads none and skips itself, by design. It closes a hole specific to Claude
+Code's `excludedCommands`, which Codex has no equivalent of. Budget, accident
+catcher and trace still run.
 
 Bump `version` in **both** `.claude-plugin/plugin.json` and
 `.codex-plugin/plugin.json` on every release; without a bump, installed copies
 keep the cached version and never see your changes. `test_docs.py` asserts the
 two numbers stay equal — one release, one number.
 
-**By copying (no plugin support, or you want to fork it).**
+### Route 2: copy everything (no plugin support, or you want to fork it)
+
+Same three files, plus the components the plugin would otherwise have carried:
 
 ```
-cp -r AGENTS.md CLAUDE.md GEMINI.md .geminiignore \
-      .claude/ .codex/ .cursor/ docs/ evals/ /path/to/your-project/
+cp -r AGENTS.md CLAUDE.md .claude/ .codex/ docs/ evals/ templates/ \
+      /path/to/your-project/
+cp settings.consumer.example.json /path/to/your-project/.claude/settings.json
 ```
+
+Then replace the `HARNESS:PROJECT` block, and verify the boundary landed:
+
+```
+python3 --version                                          # the only extra dep
+python3 .claude/hooks/test_policy.py .claude/settings.json
+```
+
+**`example/` is never copied**, in either route. It is the demo project, not
+part of the harness — nothing in `.claude/`, `.codex/` or the hooks refers to it
+except `.claude/format.map.json`. What you copy and fill in is `templates/`;
+`example/` is what you read next to it. `docs/adopt.md` pairs each blank with its
+worked counterpart.
 
 Copies drift and have no update path — that is the trade-off, and it is why the
 plugin route exists.
 
-`.codex/` and `.cursor/` wire the same enforcement into Codex and Cursor; drop
-them if you only use Claude Code. `.codex/agents/*.toml` additionally gives
-Codex the same three roles as native sub-agents (`[agents]` in
-`.codex/config.toml` turns this on). Then start your agent (`claude`, `codex`,
-`gemini`, `cursor`, …) there and give it a real goal:
+`.codex/` wires the same enforcement into Codex; drop it if you only use Claude
+Code. `.codex/agents/*.toml` additionally gives Codex the same three roles as
+native sub-agents (`[agents]` in `.codex/config.toml` turns this on). Then start
+`claude` or `codex` there and give it a real goal:
 
 > Add pagination to the `/users` endpoint, with tests.
 
 It plans first, delegates `researcher` → `implementer` → `evaluator`, and pauses
 for your approval before anything irreversible.
 
-**Requirements.** Each CLI installs itself (`claude`, `codex`, `gemini`, …). The
-only *extra* dependency is **Python 3**: the hooks run as
-`python3 .claude/hooks/{preflight,guard,trace}.py`. They're stdlib-only and
-shared across Claude Code, Codex and Cursor (one copy each — see
+**Requirements.** Each CLI installs itself. The only *extra* dependency is
+**Python 3**: the hooks run as `python3 .claude/hooks/{preflight,guard,trace}.py`.
+They're stdlib-only and shared between both tools (one copy each — see
 `docs/porting-enforcement.md`), so any Python 3 works — but if `python3` isn't on
 `PATH` they don't fail loudly, they silently no-op, and an absent `PreToolUse`
 hook blocks nothing (see *Verify before trusting*). That quietly drops the
@@ -134,17 +220,22 @@ session budget, the accident catcher **and** the audit trace — the whole hook
 layer — while the sandbox and permission rules stay up. Run `python3 --version`
 before you rely on enforcement.
 
-Already have an `AGENTS.md`? Merge — don't overwrite. Keep your project's build
-commands and conventions; add the sections you want from this one.
+**Checking the install.** At session start `preflight.py` prints one line naming
+what is actually armed — the shell-call budget, the accident catcher, how many
+excluded prefixes the chaining check loaded, and where the trace goes. If you do
+not see that line, the hook layer did not run at all. That is the whole point of
+printing it: silence must never be evidence of a boundary.
 
-## Prerequisites: Maven
+## Prerequisites: your project's toolchain
 
-The backend uses the system **`mvn`**, not the `./mvnw` wrapper — the wrapper
-trips the sandbox (it writes outside the paths the sandbox allows, so the
-first invocation fails as a sandbox error rather than a Maven error). Install
-Maven yourself in whatever environment actually runs the agent: inside WSL2 on
-Windows, or natively on Linux/macOS. See `backend/AGENTS.md` for the `mvn`
-commands used day to day.
+The harness itself needs Python 3 and nothing else. Whatever your build needs is
+your project's business — with one rule worth carrying over: **name commands the
+sandbox actually permits.** A wrapper that writes outside the working directory
+(`./mvnw` is the demo's example) fails on first invocation as a *sandbox* error
+rather than a build error, which reads like a tooling bug and costs an hour.
+`test_docs.py` enforces that no skill or role prompt hands `./mvnw` to an agent.
+
+The demo project's own toolchain notes are in `example/README.md`.
 
 ## Prerequisites: Windows + WSL
 
@@ -188,24 +279,19 @@ shebang — and those failures read as sandbox or tooling bugs, not what they ar
 
 ### The instructions are shared; the sandbox setup is not
 
-Every agent reads the *same* `AGENTS.md` and the *same* role prompts, so their
+Both tools read the *same* `AGENTS.md` and the *same* role prompts, so their
 **behaviour is identical**. Their **enforcement is not**: each draws the boundary
-with a different OS mechanism, so what you install under WSL2 differs per tool.
+with a different OS mechanism, so what you install under WSL2 differs.
 
-| Agent | Reads | Boundary under WSL2 | Install / enable |
-|---|---|---|---|
-| **Claude Code** | `CLAUDE.md` | `bubblewrap` + `socat`, in the distro — no container | `sudo apt-get install bubblewrap socat`. Ubuntu 24.04+: also allow `bwrap` user namespaces (AppArmor). `/sandbox` → *Dependencies* lists anything missing. |
-| **Codex** | `AGENTS.md` | Landlock + seccomp, in the distro — no container | Node 22+; nothing extra for the sandbox. WSL1 is seen as "linux" but fails the seccomp/Landlock probe — you must be on WSL2. Enforcement is wired in **`.codex/`** (config + hooks; trusted projects only). |
-| **Gemini CLI** | `GEMINI.md` | **Container only** (Docker/Podman) — `sandbox-exec` is macOS-only, so there's no host-level boundary here | A Docker/Podman engine running *in* the distro, then `GEMINI_SANDBOX=docker` (or `-s`). Native Docker-in-WSL2 (no Docker Desktop): enable `systemd` in `/etc/wsl.conf` and join the `docker` group, or Gemini silently falls back to **no** sandbox. |
-| **Cursor** (+ Copilot, Aider, Zed, ZCode, …) | `AGENTS.md` | Cursor: its own agent sandbox; others vary | Cursor ships **`.cursor/`** (hooks + `sandbox.json` domain allowlist). The rest don't read `.claude/` — get the boundary from an OS-level sandbox (WSL2 + a container) and reproduce the deny/ask policy in the tool's own permissions (e.g. ZCode's per-agent read/write perms + Execution Modes). Full per-tool wiring: **`docs/porting-enforcement.md`**. |
+| Agent | Boundary under WSL2 | Install / enable |
+|---|---|---|
+| **Claude Code** | `bubblewrap` + `socat`, in the distro — no container | `sudo apt-get install bubblewrap socat`. Ubuntu 24.04+: also allow `bwrap` user namespaces (AppArmor). `/sandbox` → *Dependencies* lists anything missing. |
+| **Codex** | Landlock + seccomp, in the distro — no container | Node 22+; nothing extra for the sandbox. WSL1 is seen as "linux" but fails the seccomp/Landlock probe — you must be on WSL2. Enforcement is wired in **`.codex/`** (config + hooks; trusted projects only). |
 
-So the answer to the obvious follow-up — *is the behaviour identical across
-agents?* — is: yes for the instructions, no for enforcement. Claude Code and
-Codex isolate at the host level inside the distro; Gemini CLI needs a container
-running; other tools don't read `.claude/`, so they need an OS-level sandbox plus
-their own permission controls — now wired for Codex (`.codex/`) and Cursor
-(`.cursor/`), and documented for ZCode, in `docs/porting-enforcement.md`. Set
-your expectations by the row above.
+So the answer to the obvious follow-up — *is the behaviour identical?* — is: yes
+for the instructions, no for enforcement. Both isolate at the host level inside
+the distro, but through different primitives, configured in different files.
+`docs/porting-enforcement.md` has the per-tool wiring and the two residual risks.
 
 ## No generator, no drift
 
@@ -213,9 +299,9 @@ Every piece of content exists **exactly once**, in the format the tool actually
 reads. There is nothing to regenerate and nothing to keep in sync:
 
 ```
-AGENTS.md                 the canonical instructions — the only copy
+AGENTS.md                 the canonical instructions — the only copy. Generic,
+                          except the HARNESS:PROJECT block: your project facts
 CLAUDE.md                 3 lines + Claude specifics; imports AGENTS.md
-GEMINI.md                 3 lines + Gemini specifics; imports AGENTS.md
 .claude/agents/*.md       the three role prompts for Claude Code
                           (YAML frontmatter for Claude Code; other tools read past it)
 .claude/settings.json     sandbox + permissions + hooks — for THIS repo (dev)
@@ -227,7 +313,11 @@ settings.consumer.example.json  what a consuming project copies: same boundary,
 .claude/hooks/trace.py    audit trail (shared across tools)
 .claude/hooks/format.py   auto-format on write (PostToolUse; best-effort)
 .claude/hooks/test_*.py   the five suites below, run in CI
-.claude/skills/*/SKILL.md on-demand workflows, loaded on description match
+.claude/skills/*/SKILL.md on-demand workflows, loaded on description match.
+                          Packaged for every consumer, so stack-agnostic only —
+                          currently just harness-adoption
+.claude/format.map.json   path prefix → formatter. The one stack-specific file
+                          under .claude/; format.py itself knows no paths
 .claude-plugin/plugin.json      makes this installable + updatable as a plugin
                           (`agents` takes FILE paths, `skills` takes directories)
 .claude-plugin/marketplace.json the catalog `/plugin marketplace add` reads
@@ -250,13 +340,17 @@ settings.consumer.example.json  what a consuming project copies: same boundary,
 .codex/agents/*.toml      the three roles as native Codex sub-agents (own copy;
                           same responsibilities as .claude/agents/*.md)
 .codex/hooks.json         Codex hook registration → the shared .claude/hooks/ scripts
-.cursor/hooks.json        Cursor hook registration → the shared .claude/hooks/ scripts
-docs/porting-enforcement.md  how enforcement maps onto Codex, Cursor and ZCode
+docs/adopt.md             replacing the demo with a real project, in order
+docs/porting-enforcement.md  how the same enforcement is wired for Codex
 docs/graph-pipeline.md    full decision-matrix criteria + graph topology (AGENTS.md keeps only the summary)
-.geminiignore             keeps secrets out of Gemini's view
 managed-settings.example.json   org-wide lockdown TEMPLATE — deploy outside the repo; never read from it
 evals/golden-tasks.md     does this setup actually work?
 .agent/                   runtime: PROGRESS.md (committed), trace.jsonl (ignored)
+templates/                skeletons: the PROJECT block, a package AGENTS.md
+example/                  THE DEMO PROJECT — not part of the harness. api/,
+                          backend/, frontend/ and the four stack skills. Delete
+                          it; only the PROJECT block and format.map.json refer
+                          to it. See example/README.md
 ```
 
 > **`managed-settings.example.json` is a template, not live config — nothing in
@@ -269,15 +363,33 @@ evals/golden-tasks.md     does this setup actually work?
 > repo is the whole point: a `deny` a developer could edit or `git revert` away
 > would enforce nothing.
 
-An earlier version of this repo generated `CLAUDE.md`, `GEMINI.md` and the role
-files from a shared source. That solved duplication by adding a build step —
-and a build step for four markdown files is worse than the problem. Anthropic's
-own advice applies to tooling as much as to agents: find the simplest thing that
-works. Imports cover Claude Code and Gemini; the role prompts live where each
-tool wants them — `.claude/agents/*.md` for Claude Code, `.codex/agents/*.toml`
-for Codex — each a standalone copy carrying the same responsibilities, not a
-generated one. Every other tool reads `AGENTS.md` directly and adopts a role
-inline.
+**A lockdown switches off the thing it is protecting, unless you let the plugin
+through.** `allowManagedHooksOnly` blocks user hooks, project hooks and plugin
+hooks alike — with one exception: hooks from plugins **force-enabled in managed
+`enabledPlugins`**, matched by the full `plugin@marketplace` id. Deploy the
+template without that entry and `guard.py`, `preflight.py` and `trace.py` simply
+stop running. Nothing announces it: preflight *is* a hook, so the `Armed: …`
+session line it normally prints just disappears, and an absent message is not a
+warning. `allowManagedPermissionRulesOnly` does the same to the deny/ask list —
+project rules go inert, so the baseline has to be repeated in the managed file
+or it exists nowhere.
+
+`managed-settings.example.json` therefore carries all three: the force-enable,
+the full deny/ask baseline, and `sandbox.enabled` + `allowUnsandboxedCommands:
+false`. `test_docs.py` fails the build if a flag is set without its replacement.
+
+This also answers *is the plugin worth shipping, if it cannot carry the
+boundary?* Under a lockdown it is the **only** delivery form that survives: a
+copied `.claude/hooks/` is a project hook and gets blocked, while the plugin's
+hooks run because the admin vetted them by id. Route 2 is the one a lockdown
+breaks, not Route 1.
+
+An earlier version of this repo generated `CLAUDE.md` and the role files from a
+shared source. That solved duplication by adding a build step, and a build step
+for four markdown files is worse than the problem. The import covers Claude Code;
+the role prompts live where each tool wants them — `.claude/agents/*.md`,
+`.codex/agents/*.toml` — each a standalone copy carrying the same
+responsibilities, not a generated one.
 
 ## Instructions vs. enforcement
 
@@ -373,40 +485,43 @@ markdown and drop straight into their sub-agent definitions.
 
 ## Monorepos
 
-The **closest** `AGENTS.md` wins. Keep this root file to what applies
-everywhere, and put package-specific build commands, framework conventions and
-local anti-patterns in a nested `AGENTS.md` inside that package. Nested files
-keep the root small, which is what keeps it read.
+The **closest** `AGENTS.md` wins, and the root is inherited into every package —
+see *How the two levels compose* for what belongs at which level and for the
+Codex discovery caveat. Keep this root file to what applies everywhere and put
+package-specific build commands, framework conventions and local anti-patterns in
+a nested `AGENTS.md`. Nested files keep the root small, which is what keeps it
+read.
 
 ## Recommendations
 
 Beyond what's already wired, these are the agentic-coding habits current practice
 converges on. Optional and opinionated — adopt what fits.
 
-- **Ship it as a plugin, not a copy.** `.claude-plugin/` makes this repo
-installable via `/plugin marketplace add` and updatable via `/plugin update`;
-`.codex-plugin/` plus `.agents/plugins/marketplace.json` do the same for Codex.
-Copies have no update path; a plugin has a `version` field that is the update
-signal, so bump it on every release — in both manifests. The one thing neither
-plugin format *can* carry is the boundary: `.claude/settings.json` and
-`.codex/config.toml` are project settings, not plugin components. Codex adds a
-second gap, the sub-agent definitions, which its manifest has no field for.
-Worth knowing before you assume the boundary travels with the install.
+- **Ship it as a plugin, not a copy.** Copies have no update path; a plugin's
+`version` field is the update signal, so bump it on every release — in both
+manifests. What the plugin does and does not carry is the table under *Install*;
+Codex adds one more gap, the sub-agent definitions, which its manifest has no
+field for.
 - **Push repeated workflows into skills, not this file.** On-demand context
   (loaded only when its description matches) keeps the always-loaded memory lean
-  — the same reason the root nearly blew the ~200-line budget. Four are wired in
-  `.claude/skills/` (Claude Code): `openapi-client`, `liquibase-changeset`,
-  `ddd-archunit`, `quarkus-testing`. Add your own for any workflow you'd
-  otherwise explain twice.
-- **Auto-format on write.** Wired as `.claude/hooks/format.py` (PostToolUse):
-  Prettier for `frontend/**`, google-java-format for `backend/**` Java, both only
-  if installed. Best-effort and non-blocking; Spotless/Prettier in `verify` stay
-  the source of truth. Remove the PostToolUse entry to disable it.
+  — the same reason the root nearly blew the ~200-line budget. `.claude/skills/`
+  ships one, `harness-adoption` (where project information goes, and why it is
+  never an `@import`); it is packaged for every consumer, so only stack-agnostic
+  skills belong there. The demo's four — `openapi-client`, `liquibase-changeset`,
+  `ddd-archunit`, `quarkus-testing` — sit under `example/skills/` as reference.
+  Add your own for any workflow you'd otherwise explain twice.
+- **Auto-format on write.** Wired as `.claude/hooks/format.py` (PostToolUse).
+  The hook is stack-agnostic; *which* formatter runs where is project data in
+  `.claude/format.map.json` (path prefix + extensions + command). The demo maps
+  `example/frontend/` to Prettier and `example/backend/` to google-java-format,
+  each only if installed. Best-effort and non-blocking; the formatters in your
+  build stay the source of truth. Empty `rules` disables it, or remove the
+  PostToolUse entry.
 - **Demand evidence, not assertions.** "It works" is not a result. The evaluator
   already verifies; have it *show* the command it ran and the test summary (a
   screenshot for UI) so a human can trust a verdict without re-running it. It
   also names the convention files it read: a skill loads only when its
-  description matches, so the evaluator reads `backend/AGENTS.md` and the
+  description matches, so the evaluator reads the nearest `AGENTS.md` and the
   relevant `SKILL.md` as plain files rather than assuming the implementer did.
 - **Context hygiene.** `/clear` between unrelated tasks, and compact *before*
   ~50% rather than letting it auto-compact (the model is weakest mid-compaction).
@@ -427,32 +542,27 @@ Worth knowing before you assume the boundary travels with the install.
 | Symptom | Fix |
 |---|---|
 | `/agents` doesn't list the sub-agents | You edited files on disk — restart the Claude Code session. Agents created via `/agents` apply immediately. |
-| The agent ignores `AGENTS.md` / `CLAUDE.md` | It must be in the directory you launched from (or a parent). Check with `/memory` (Claude Code) or `/memory show` (Gemini CLI). |
-| Codex/Vibe ignore my `CODEX.md` / `MISTRAL.md` | Neither filename is read by anything. Both tools read `AGENTS.md`. |
-| Gemini loads `GEMINI.md` but not the rest | Run `/memory refresh`. Imports resolve at load time, max depth 5. |
+| The agent ignores `AGENTS.md` / `CLAUDE.md` | It must be in the directory you launched from (or a parent). Check with `/memory` (Claude Code). |
+| Codex ignores my `CODEX.md` | That filename is read by nothing. Codex reads `AGENTS.md`. |
 | Claude Code sandbox won't start on Linux/WSL2 | Install `bubblewrap` + `socat` (`/sandbox` → *Dependencies* shows what's missing); on Ubuntu 24.04+ allow `bwrap` user namespaces. WSL1 and native Windows are unsupported — see *Prerequisites: Windows + WSL*. |
-| Gemini CLI runs but the status bar shows "no sandbox" under WSL2 | `sandbox-exec` is macOS-only, so WSL2 needs a container: start a Docker/Podman engine in the distro and set `GEMINI_SANDBOX=docker`. With native Docker (no Docker Desktop) enable `systemd` and join the `docker` group. |
 | Codex: "seccomp/landlock … not supported in this environment" | You're on WSL1 (or an old kernel) — Codex detects it as Linux but the primitives aren't there. Move to WSL2. |
 | Heredocs (`<< EOF`) fail | A known sandbox limitation: the shell needs a temp file. Write the file, then run it. |
 | The guard blocks something legitimate | Move it out of `ACCIDENT_PATTERNS` and add a `Bash(...)` **ask** rule in `.claude/settings.json`. Don't disable the sandbox. |
 | Every Bash command fails with `apply-seccomp: write /proc/self/uid_map: Operation not permitted` | `bwrap` itself can't start — see *Known issue: bwrap can't create its user namespace* below. Only commands listed in `sandbox.excludedCommands` in `.claude/settings.json` (currently `docker *`, `mvn *`, `npm *`, `find *`, `ls *`, `grep *`), which skip the sandbox wrapper entirely, still run; everything else — including `echo` and `git` — is blocked at the boundary, not by a permission rule. **Don't "fix" this by adding more entries to `excludedCommands`** — see *Known issue: `excludedCommands` matches the whole shell line* below before touching that list. |
-| Context feels bloated | `AGENTS.md` is 167 lines; with `CLAUDE.md` Claude Code sees 199 — just under Anthropic's ~200 guideline. Re-measure with `cat CLAUDE.md AGENTS.md \| wc -l` after editing either; the number above goes stale silently. Stack detail lives in the nested `backend/` / `frontend/` `AGENTS.md` (loaded only in-tree), and repeated workflows belong in `.claude/skills/` (see *Recommendations*), not here. `@path` imports do **not** reduce context — they load at launch. |
+| Context feels bloated | `AGENTS.md` is 162 lines; with `CLAUDE.md` Claude Code sees 199 — just under Anthropic's ~200 guideline. Re-measure with `cat CLAUDE.md AGENTS.md \| wc -l` after editing either; the number above goes stale silently. Stack detail lives in the nested per-package `AGENTS.md` (loaded only in-tree — and see *Where project information lives* for what Codex does with those), and repeated workflows belong in `.claude/skills/` (see *Recommendations*), not here. `@path` imports do **not** reduce context — they load at launch. |
 
 ## Known gaps
 
-- **Enforcement isn't wired for every tool.** It *is* wired for Claude Code,
-  Codex and Cursor — `.codex/` and `.cursor/` register the *same* `preflight.py`
-  / `guard.py` / `trace.py`, sharing Claude Code's stdin+exit-2 contract, so it's
-  one copy each, not a fork. It is **not** wired for the rest: ZCode has no shell
-  hook or bundled sandbox and leans on its Execution Modes + per-agent
-  permissions plus an OS-level sandbox (documented, not wired); Gemini CLI has
-  only a sandbox flag; Vibe has only per-tool permissions. Details and caveats
-  (Codex trust, Cursor's allowlist-vs-hook precedence): see
-  `docs/porting-enforcement.md`.
-- **Mistral Vibe sub-agents are not shipped.** An earlier version generated
-  `.vibe/agents/*.toml`, but the schema beyond `agent_type`/`description` was
-  never verified against a live CLI, so it was removed rather than shipped
-  broken. Vibe reads `AGENTS.md` and adopts roles inline.
+- **Enforcement is wired for two tools, by design.** `.claude/` and `.codex/`
+  register the *same* `preflight.py` / `guard.py` / `trace.py`, sharing one
+  stdin+exit-2 contract — one copy each, not a fork. Any other `AGENTS.md`
+  reader gets the instructions and none of this; the boundary there is an
+  OS-level sandbox you provide plus that tool's own permission model. Details
+  and caveats (Codex trust, the two residual risks): `docs/porting-enforcement.md`.
+- **A session-start check, not a running one.** `preflight.py` verifies that a
+  sandbox is available *and* configured before the first tool call. It cannot
+  see a settings change made mid-session, and it runs outside the wrapper the
+  Bash tool itself uses — see *Verify before trusting*.
 
 ## Verify before trusting
 
@@ -516,7 +626,7 @@ bridge to an outer-namespace TCP proxy). Possible upstream bug:
 
 This has only been reproduced with Claude Code's sandbox on WSL2 — it has not
 yet been verified on other platforms (native Linux, macOS/Seatbelt) or with
-other AI coding tools (Codex, Gemini CLI), so treat it as scoped to that combo
+other AI coding tools (Codex), so treat it as scoped to that combo
 until someone confirms otherwise.
 
 Workaround: Sandbox exclude Docker, Maven and NPM

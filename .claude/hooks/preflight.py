@@ -26,10 +26,9 @@ reachable from here. Two consequences, both deliberate:
     run, with no boundary at all. That is guard.py's chaining check's job, not
     this file's.
 
-Wiring (same script, three tools):
+Wiring (same script, both tools):
   * Claude Code — SessionStart   (.claude/settings.json)
   * Codex       — SessionStart   (.codex/hooks.json)
-  * Cursor      — sessionStart   (.cursor/hooks.json)
 
 Design choices:
   * Conservative. It BLOCKS only clear-cut cases (WSL1, missing bwrap/socat, or
@@ -50,12 +49,14 @@ Stdlib only.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import platform
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 BWRAP_INSTALL = "sudo apt-get install -y bubblewrap socat"
 
@@ -81,6 +82,33 @@ PROBE_TIMEOUT_S = 10
 # bwrap rejects this invocation for an unrelated reason and you need a session
 # now. HARNESS_SKIP_PREFLIGHT=1 still disables everything.
 PROBE_SANDBOX = True
+
+# ── Policy gate ────────────────────────────────────────────────────────────
+#
+# The probe above answers "can this machine build a sandbox". It does NOT answer
+# "is this project configured to use one" — and those come apart in exactly the
+# case the plugin route creates: install the plugin, get roles, skills and hooks,
+# never copy settings.consumer.example.json. bwrap is present, the probe is
+# green, the session looks armed, and there is no boundary at all.
+#
+# So read the policy that will actually apply and check the two things that make
+# it a boundary. Blocking is reserved for the sandbox: permission rules are the
+# second layer, and a project that deliberately trims them should get a warning,
+# not a stopped session.
+CHECK_POLICY = True
+
+# Settings sources, lowest precedence first. The managed file outranks all of
+# them and cannot be overridden — which is why it is read too: a project without
+# a sandbox block is fine if the org pinned one centrally.
+MANAGED_SETTINGS = {
+    "Linux": "/etc/claude-code/managed-settings.json",
+    "Darwin": "/Library/Application Support/ClaudeCode/managed-settings.json",
+}
+
+# Denies that carry the "no secrets, no unmetered egress" promise AGENTS.md
+# makes. Matched by substring against the rule strings, so `Read(./.env)` and
+# `Read(**/.env)` both satisfy `.env`.
+EXPECTED_DENY_MARKERS = [".env", "secrets", "curl", "wget", "sudo"]
 
 
 def _run(cmd):
@@ -145,10 +173,128 @@ def _read_event() -> dict:
         return {}
 
 
+def enforcement_summary() -> str:
+    """One line naming what is actually armed this session.
+
+    Every failure mode in this hook layer is silent: no `python3` on PATH, an
+    unreadable settings.json, a counter on a read-only filesystem. Each of those
+    is individually defensible — together they make a layer whose absence nobody
+    notices. So report the live values rather than the documented ones: the
+    numbers are read out of guard.py itself, and the excluded-prefix count comes
+    from the same function the chaining check uses. `0 excluded prefixes` means
+    that check is inert, which is exactly the thing worth seeing at a glance.
+    """
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_harness_guard", str(Path(__file__).resolve().parent / "guard.py"))
+        guard = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(guard)
+    except Exception as exc:  # noqa: BLE001
+        return (f" Guard NOT loadable ({exc.__class__.__name__}): no shell-call "
+                "budget, no accident catcher, no chaining check this session.")
+    try:
+        prefixes = len(guard.excluded_prefixes())
+    except Exception:  # noqa: BLE001
+        prefixes = 0
+    budget = guard.MAX_SHELL_CALLS_PER_SESSION
+    return (
+        f" Armed: budget {budget or 'off'} shell calls, accident catcher "
+        f"{'on' if guard.ACCIDENT_CATCHER else 'OFF'}, chaining check over "
+        f"{prefixes} excluded prefix(es)"
+        f"{' — inert, settings.json unreadable from here' if not prefixes else ''}"
+        f"; trace -> .agent/trace.jsonl."
+    )
+
+
+def _load_json(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def effective_policy() -> dict:
+    """The sandbox/permission policy this session will actually run under.
+
+    Merged the way Claude Code resolves settings: project, then user, then the
+    managed file, later winning. This is an approximation on purpose — a hook
+    cannot ask the CLI for its resolved config, and a wrong *guess* here would
+    be worse than none. So it only reads what is unambiguous, and every check
+    built on it treats "not found" as "cannot tell", never as "absent".
+    """
+    root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or ".")
+    sources = [
+        root / ".claude" / "settings.json",
+        root / ".claude" / "settings.local.json",
+        Path.home() / ".claude" / "settings.json",
+    ]
+    managed = MANAGED_SETTINGS.get(platform.system())
+    if managed:
+        sources.append(Path(managed))
+
+    merged: dict = {"sandbox": {}, "permissions": {}}
+    for src in sources:
+        data = _load_json(src)
+        if not data:
+            continue
+        for key in ("sandbox", "permissions"):
+            block_ = data.get(key)
+            if isinstance(block_, dict):
+                merged[key] = {**merged[key], **block_}
+    return merged
+
+
+def check_policy() -> None:
+    """Stop when the boundary is unconfigured; warn when the rules are thin.
+
+    Claude Code only. Codex draws its boundary in .codex/config.toml with a
+    different vocabulary, so applying these checks there would produce a
+    confident block based on a file Codex never reads. When the tool cannot be
+    identified, skip: a false block on a correctly configured session is how a
+    gate gets switched off.
+    """
+    if not CHECK_POLICY:
+        return
+    if not (os.environ.get("CLAUDE_PROJECT_DIR") or os.environ.get("CLAUDECODE")):
+        return
+
+    policy = effective_policy()
+    sandbox = policy.get("sandbox", {})
+
+    if sandbox.get("enabled") is not True:
+        block(
+            "no sandbox is configured for this project. The prerequisites are "
+            "present, so this is a CONFIGURATION gap, not a machine one: the "
+            "hooks, roles and skills are installed but nothing restricts what "
+            "Bash can write or reach. Copy settings.consumer.example.json to "
+            ".claude/settings.json (it carries the boundary — a plugin cannot), "
+            "or set sandbox.enabled centrally in managed settings."
+        )
+
+    notes = []
+    if sandbox.get("allowUnsandboxedCommands") is not False:
+        notes.append(
+            "sandbox.allowUnsandboxedCommands is not false — a command that "
+            "fails inside the sandbox may be retried outside it"
+        )
+    deny = policy.get("permissions", {}).get("deny", [])
+    rules = " ".join(deny) if isinstance(deny, list) else ""
+    gaps = [m for m in EXPECTED_DENY_MARKERS if m not in rules]
+    if gaps:
+        notes.append(
+            "no deny rule covers " + ", ".join(gaps) + " — the sandbox still "
+            "holds, but the second layer AGENTS.md describes is thinner than "
+            "documented"
+        )
+    if notes:
+        allow("Preflight WARNING: " + "; ".join(notes) + ".")
+
+
 def allow(message: str = "") -> None:
     """Let the session start. Optionally surface a non-blocking note."""
     if message:
-        out = {"continue": True, "systemMessage": message}
+        out = {"continue": True, "systemMessage": message + enforcement_summary()}
         print(json.dumps(out))
     sys.exit(0)
 
@@ -190,11 +336,17 @@ def _is_wsl2() -> bool:
 
 def check() -> None:
     if os.environ.get("HARNESS_SKIP_PREFLIGHT"):
-        allow()  # caller asserts external isolation
+        # The caller asserts external isolation. Say so rather than exiting
+        # silently: a silent skip is indistinguishable from a hook that never
+        # ran, and this is the one path where the sandbox check is knowingly
+        # off — precisely when you want the rest of the layer named out loud.
+        allow("Preflight SKIPPED (HARNESS_SKIP_PREFLIGHT=1): the sandbox was "
+              "not checked; this run trusts isolation provided elsewhere.")
 
     system = platform.system()
 
     if system == "Darwin":
+        check_policy()
         allow("Preflight: macOS — Claude Code/Codex use the built-in Seatbelt sandbox.")
 
     if system == "Windows":
@@ -233,6 +385,9 @@ def check() -> None:
             allow(f"Preflight WARNING: could not determine whether bwrap works "
                   f"({detail}). The boundary may be absent — verify with "
                   f"`{' '.join(PROBE_STRONG)}` before trusting this run.")
+        # The machine can build a sandbox. Whether this project asks it to is a
+        # separate question, and the one the plugin route gets wrong.
+        check_policy()
         # Say so out loud, and say what it does NOT prove. The success path used
         # to be silent, which made "the probe ran and passed" indistinguishable
         # from "the hook never ran" — and an absent hook is the likelier of the

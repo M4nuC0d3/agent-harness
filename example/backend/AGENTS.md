@@ -1,4 +1,4 @@
-# backend/AGENTS.md
+# example/backend/AGENTS.md
 
 Quarkus service, **Java 25**, built with **Maven** (`mvn`). Packaged as a JVM
 jar for now — no native build yet. Domain-Driven Design, with the architecture
@@ -79,7 +79,7 @@ equivalent).
 The REST layer **implements** the shared contract at `../api/openapi.yaml`; the
 code is not the source of truth. Server interfaces and DTOs are generated from
 that spec (e.g. openapi-generator `jaxrs-spec`). **Do not hand-edit generated
-code.** To change an endpoint: edit `api/openapi.yaml` first, regenerate, then
+code.** To change an endpoint: edit `../api/openapi.yaml` first, regenerate, then
 implement. Error responses follow RFC 7807 Problem Details (adjust if the
 contract defines a different error schema).
 
@@ -104,7 +104,7 @@ contract defines a different error schema).
   empty mappers.
 - Formatting is enforced in `verify` by **Spotless**, configured to run
   **google-java-format** — the same formatter the auto-format-on-write hook
-  (`.claude/hooks/format.py`) applies to `backend/**` Java. Settled here so it
+  (`.claude/hooks/format.py`, via `.claude/format.map.json`) applies to this tree's Java. Settled here so it
   isn't a per-PR debate.
 - **Do not touch:** `target/`, and anything under the generated-API output
   folder. Regenerate it; don't edit it.

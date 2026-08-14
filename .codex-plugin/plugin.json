@@ -1,7 +1,7 @@
 {
   "name": "agent-harness",
-  "version": "0.1.1",
-  "description": "A coordinator plus three roles (researcher, implementer, evaluator) with a session budget, an accident catcher and an audit trace. Model-agnostic instructions; enforcement wired for Codex.",
+  "version": "0.1.2",
+  "description": "A coordinator plus three roles (researcher, implementer, evaluator) with a session budget, an accident catcher and an audit trace. Stack-agnostic: project facts live in one marked block of AGENTS.md. Enforcement wired for Codex.",
   "author": {
     "name": "M4nuC0d3",
     "url": "https://github.com/M4nuC0d3"
@@ -13,15 +13,14 @@
     "subagents",
     "enforcement",
     "sandbox",
-    "quarkus",
-    "angular"
+    "template"
   ],
   "skills": "./.claude/skills/",
   "hooks": "./hooks.json",
   "interface": {
     "displayName": "Agent Harness",
     "shortDescription": "Coordinator + three roles, with enforcement that holds when instructions don't.",
-    "longDescription": "Turns Codex into a coordinator that plans, delegates to a researcher, an implementer and an evaluator, and refuses work the evaluator hasn't passed. Ships four on-demand skills (OpenAPI client generation, Liquibase changesets, DDD/ArchUnit layering, Quarkus testing) and a hook layer: a session tool-call budget, an accident catcher and an audit trace under .agent/. The sandbox and approval policy are project settings and do not travel with the plugin \u2014 copy .codex/config.toml into your project.",
+    "longDescription": "Turns Codex into a coordinator that plans, delegates to a researcher, an implementer and an evaluator, and refuses work the evaluator hasn't passed. Stack-agnostic: everything about your project lives in one marked block of AGENTS.md, one AGENTS.md per package, and .claude/format.map.json — never behind an @import, which Codex cannot resolve. Ships the harness-adoption skill and a hook layer: a session tool-call budget, an accident catcher and an audit trace under .agent/. The sandbox and approval policy are project settings and do not travel with the plugin — copy .codex/config.toml into your project.",
     "developerName": "M4nuC0d3",
     "category": "Productivity",
     "capabilities": [

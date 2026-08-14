@@ -15,7 +15,7 @@ Every case below is a property the trace has to keep:
     python3 .claude/hooks/test_trace.py .claude/hooks/trace.py
 
 Stdlib only. Runs the hook as a subprocess in a scratch directory, exactly as
-Claude Code, Codex and Cursor run it.
+Claude Code and Codex run it.
 """
 from __future__ import annotations
 
@@ -117,7 +117,7 @@ def main() -> int:
     check("the parameter name is present", lines and "api_key" in lines[0].get("args", []),
           f"got {lines[0].get('args') if lines else None}")
 
-    print("\nCursor's shell shape (top-level command, no tool_name):")
+    print("\nThe top-level command shape (no tool_name):")
     rc, lines = run({"command": "npm ci", "cwd": "/repo", "sandbox": False})
     check("exit code is 0", rc == 0, f"got {rc}")
     check("tool is inferred as Bash", lines and lines[0].get("tool") == "Bash",

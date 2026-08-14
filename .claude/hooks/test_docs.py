@@ -29,8 +29,13 @@ ALWAYS_LOADED = ["CLAUDE.md", "AGENTS.md"]
 
 # The wrapper trips the sandbox (README *Prerequisites: Maven*). Instruction
 # files that the agent follows must never name it as a command to run. README
-# and backend/AGENTS.md are excluded: they explain *why* not to use it.
-NO_MVNW_IN = [".claude/skills", ".claude/agents", ".codex/agents"]
+# and example/backend/AGENTS.md are excluded: they explain *why* not to use it.
+NO_MVNW_IN = [".claude/skills", ".claude/agents", ".codex/agents", "example/skills"]
+
+# Codex refuses to load an AGENTS.md past this; Claude Code would still read it,
+# so the two tools would silently disagree about the rules.
+CODEX_AGENTS_LIMIT = 32 * 1024
+MARKERS = ("<!-- HARNESS:PROJECT-START", "<!-- HARNESS:PROJECT-END")
 
 failures: list[str] = []
 
@@ -76,6 +81,41 @@ def main() -> int:
         f"README says {claimed.group(1) if claimed else '?'}, actual is {total}",
     )
 
+    print("\nThe project block — the one part a consumer replaces:")
+    agents = read("AGENTS.md")
+    check("AGENTS.md carries both HARNESS:PROJECT markers",
+          all(m in agents for m in MARKERS),
+          "docs/adopt.md and the harness-adoption skill both point at them")
+    check(f"AGENTS.md fits Codex's {CODEX_AGENTS_LIMIT // 1024} KiB ceiling",
+          len(agents.encode("utf-8")) < CODEX_AGENTS_LIMIT,
+          "Codex would drop the file that Claude Code still reads")
+    # The split between harness and project must not be made with an import:
+    # Claude Code resolves @path, Codex has no import directive at all
+    # (openai/codex#17401), so half the instruction layer would go missing in
+    # one tool with nothing to show for it. CLAUDE.md may import;
+    # AGENTS.md is the file both tools read literally.
+    imports = [f"{i}: {ln}" for i, ln in enumerate(agents.splitlines(), 1)
+               if ln.strip().startswith("@")]
+    check("AGENTS.md contains no @imports", not imports,
+          f"Codex cannot resolve these — {imports}")
+    if (ROOT / "example").is_dir():
+        check("the example project is out of the packaged tree",
+              not (ROOT / ".claude/skills").joinpath("quarkus-testing").exists(),
+              "stack skills under .claude/skills/ install for every consumer")
+
+    print("\nFormatter map (the only stack knowledge left in .claude/):")
+    fmap = json.loads(read(".claude/format.map.json"))
+    for rule in fmap.get("rules", []):
+        prefix = rule.get("prefix", "")
+        check(f"format.map prefix exists: {prefix or '<repo root>'}",
+              not prefix or (ROOT / prefix).exists(),
+              "the rule can never match — repoint it or drop it")
+        check(f"format.map rule for {prefix or '<repo root>'} names a command",
+              bool(rule.get("command")), "an empty command formats nothing")
+    check("format.py reads the map instead of hard-coding paths",
+          "format.map.json" in read(".claude/hooks/format.py"),
+          "adopting another stack would mean patching a hook")
+
     print("\nCommands the sandbox actually permits:")
     for rel in NO_MVNW_IN:
         offenders = []
@@ -104,6 +144,16 @@ def main() -> int:
               fm.get("name") == name, f"frontmatter says {fm.get('name')!r}")
     missing = [s for s in skills if s not in readme]
     check("README mentions every wired skill", not missing, f"missing: {missing}")
+
+    example_skills_dir = ROOT / "example/skills"
+    if example_skills_dir.is_dir():
+        example_readme = read("example/README.md")
+        for name in sorted(d.name for d in example_skills_dir.iterdir() if d.is_dir()):
+            fm = frontmatter(example_skills_dir / name / "SKILL.md")
+            check(f"example skill {name}: frontmatter name matches its directory",
+                  fm.get("name") == name, f"frontmatter says {fm.get('name')!r}")
+            check(f"example/README.md mentions {name}", name in example_readme,
+                  "reference material nobody is pointed at rots unnoticed")
 
     print("\nRoles:")
     claude_agents = sorted(p.stem for p in (ROOT / ".claude/agents").glob("*.md"))
@@ -233,6 +283,72 @@ def main() -> int:
         check(f"{block_name} block is identical in both settings files",
               settings.get(block_name) == consumer.get(block_name),
               "the boundary would differ between this repo and every install")
+
+    print("\nThe eval suite must outlive the demo project:")
+    # Same rule as the instruction layer: the harness ships mechanisms, the
+    # project supplies artefacts. A golden task that says `mvn verify` only runs
+    # for one stack — and unlike a stale doc line, nobody notices, because the
+    # task simply gets skipped.
+    STACK_TERMS = ["quarkus", "angular", "liquibase", "archunit", "spock",
+                   "jakarta", "openapi", "entitymanager", "mockito", "mvn ",
+                   "maven"]
+    evals_text = read("evals/golden-tasks.md").lower()
+    leaked = sorted({term.strip() for term in STACK_TERMS if term in evals_text})
+    check("evals/golden-tasks.md names no stack", not leaked,
+          f"concrete versions belong in example/golden-tasks.md; found: {leaked}")
+    if (ROOT / "example/golden-tasks.md").exists():
+        check("the concrete task versions are pointed at from the generic suite",
+              "example/golden-tasks.md" in read("evals/golden-tasks.md"),
+              "an example nobody is sent to is an example nobody reads")
+
+    print("\nThe two project-specific settings keys stay labelled:")
+    # settings.json has no import mechanism, so the stack values cannot be split
+    # out into a separate file — the same constraint as AGENTS.md. Marking them
+    # is the next best thing, and the marking is only worth something if it is
+    # checked against reality.
+    for rel in (".claude/settings.json", "settings.consumer.example.json"):
+        data = json.loads(read(rel))
+        note = " ".join(data.get("_project_keys", []))
+        check(f"{rel} labels its project-specific keys", bool(note),
+              "a consumer cannot tell policy from stack without it")
+        check(f"{rel}: the labelled keys exist",
+              "excludedCommands" in data.get("sandbox", {})
+              and "allowedDomains" in data.get("sandbox", {}).get("network", {}),
+              "the label points at keys that are not there")
+    check("docs/adopt.md walks through both labelled keys",
+          "excludedCommands" in read("docs/adopt.md")
+          and "allowedDomains" in read("docs/adopt.md"),
+          "the label needs somewhere to send people")
+
+    print("\nManaged lockdown — the template must replace what its flags remove:")
+    managed = json.loads(read("managed-settings.example.json"))
+    plugin_id = f"{plugin['name']}@{market['name']}"
+    # allowManagedHooksOnly blocks project hooks AND plugin hooks, except plugins
+    # force-enabled in managed enabledPlugins (matched by full plugin@marketplace
+    # id). Setting the flag without that entry silently switches off guard.py,
+    # preflight.py and trace.py — and preflight, being a hook, cannot report it.
+    # The failure is a MISSING session message, which nobody notices.
+    if managed.get("allowManagedHooksOnly"):
+        check("managed template force-enables this plugin's hooks",
+              managed.get("enabledPlugins", {}).get(plugin_id) is True,
+              f"allowManagedHooksOnly blocks every other hook source; {plugin_id} "
+              "must be in enabledPlugins or the hook layer is off")
+        check("managed template knows the marketplace it force-enables",
+              market["name"] in managed.get("extraKnownMarketplaces", {}),
+              "the plugin id would not resolve")
+    # allowManagedPermissionRulesOnly makes project rules inert, so the deny
+    # baseline has to exist HERE or it exists nowhere.
+    if managed.get("allowManagedPermissionRulesOnly"):
+        repo_deny = set(settings.get("permissions", {}).get("deny", []))
+        managed_deny = set(managed.get("permissions", {}).get("deny", []))
+        gap = sorted(repo_deny - managed_deny)
+        check("managed template repeats every repo-level deny rule", not gap,
+              f"project rules are inert under this flag; missing: {gap}")
+    # The boundary itself: a lockdown that leaves the sandbox optional is not one.
+    check("managed template pins the sandbox on",
+          managed.get("sandbox", {}).get("enabled") is True
+          and managed.get("sandbox", {}).get("allowUnsandboxedCommands") is False,
+          "the one thing no lower scope can then re-open")
 
     print()
     if failures:
