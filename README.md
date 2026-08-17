@@ -23,7 +23,7 @@ Four places, and deliberately no fifth:
 | Facts that hold repo-wide | the `HARNESS:PROJECT` block in `AGENTS.md` | Claude Code + Codex |
 | Build, tests, conventions per package | `<pkg>/AGENTS.md` | both — with a caveat |
 | A workflow you'd explain twice | a skill | Claude Code, Codex (plugin) |
-| Which formatter runs where | `.claude/format.map.json` | `format.py` |
+| Which formatter runs where | `.claude/format.map.json` **in your project** | `format.py` |
 
 Read by Claude Code and Codex, in that column, means *verified* there. Other
 tools read the same `AGENTS.md` and get the same facts; the caveats below are
@@ -193,7 +193,7 @@ python3 .claude/hooks/test_policy.py .claude/settings.json
 
 **`example/` is never copied**, in either route. It is the demo project, not
 part of the harness — nothing in `.claude/`, `.codex/` or the hooks refers to it
-except `.claude/format.map.json`. What you copy and fill in is `templates/`;
+at all. What you copy and fill in is `templates/`;
 `example/` is what you read next to it. `docs/adopt.md` pairs each blank with its
 worked counterpart.
 
@@ -311,13 +311,15 @@ settings.consumer.example.json  what a consuming project copies: same boundary,
 .claude/hooks/preflight.py sandbox gate: present AND working, fail-closed (shared)
 .claude/hooks/guard.py    session budget + opt-in accident catcher (shared; config at the top)
 .claude/hooks/trace.py    audit trail (shared across tools)
-.claude/hooks/format.py   auto-format on write (PostToolUse; best-effort)
-.claude/hooks/test_*.py   the five suites below, run in CI
+.claude/hooks/format.py   auto-format on write (PostToolUse; best-effort). Reads
+                          .claude/format.map.json from the PROJECT dir, which
+                          this repo does not ship — no map, no formatting.
+                          Prefixes are anchored there, so a rule cannot reach
+                          outside the project
+.claude/hooks/test_*.py   the six suites below, run in CI
 .claude/skills/*/SKILL.md on-demand workflows, loaded on description match.
                           Packaged for every consumer, so stack-agnostic only —
                           currently just harness-adoption
-.claude/format.map.json   path prefix → formatter. The one stack-specific file
-                          under .claude/; format.py itself knows no paths
 .claude-plugin/plugin.json      makes this installable + updatable as a plugin
                           (`agents` takes FILE paths, `skills` takes directories)
 .claude-plugin/marketplace.json the catalog `/plugin marketplace add` reads
@@ -335,7 +337,7 @@ settings.consumer.example.json  what a consuming project copies: same boundary,
                           of replacing them, so a root-level file written for
                           Codex would double-register with an unresolved
                           ${PLUGIN_ROOT} under Claude Code.
-.github/workflows/harness.yml   runs all five suites on every push and PR
+.github/workflows/harness.yml   runs all six suites on every push and PR
 .codex/config.toml        Codex sandbox + approval policy + [agents] switch
 .codex/agents/*.toml      the three roles as native Codex sub-agents (own copy;
                           same responsibilities as .claude/agents/*.md)
@@ -349,8 +351,9 @@ evals/golden-tasks.md     does this setup actually work?
 templates/                skeletons: the PROJECT block, a package AGENTS.md
 example/                  THE DEMO PROJECT — not part of the harness. api/,
                           backend/, frontend/ and the four stack skills. Delete
-                          it; only the PROJECT block and format.map.json refer
-                          to it. See example/README.md
+                          it; only the PROJECT block refers to it. Also holds
+                          .claude/format.map.json as reference — a copy nothing
+                          reads. See example/README.md
 ```
 
 > **`managed-settings.example.json` is a template, not live config — nothing in
@@ -432,9 +435,10 @@ python3 .claude/hooks/test_policy.py .claude/settings.json    # sandbox + rules 
 python3 .claude/hooks/test_docs.py   .                        # instruction-layer consistency
 python3 .claude/hooks/test_preflight.py .claude/hooks/preflight.py  # fake bwrap on PATH
 python3 .claude/hooks/test_trace.py  .claude/hooks/trace.py   # trace format is stable
+python3 .claude/hooks/test_format.py .claude/hooks/format.py  # fake formatter on PATH
 ```
 
-All five run in CI on every push and PR (`.github/workflows/harness.yml`).
+All six run in CI on every push and PR (`.github/workflows/harness.yml`).
 `test_docs.py` is the least obvious: it checks what rots silently — the
 always-loaded context staying under ~200 lines, the README's own line count
 matching reality, skills naming only commands the sandbox permits, every skill
@@ -511,12 +515,17 @@ field for.
   `ddd-archunit`, `quarkus-testing` — sit under `example/skills/` as reference.
   Add your own for any workflow you'd otherwise explain twice.
 - **Auto-format on write.** Wired as `.claude/hooks/format.py` (PostToolUse).
-  The hook is stack-agnostic; *which* formatter runs where is project data in
-  `.claude/format.map.json` (path prefix + extensions + command). The demo maps
-  `example/frontend/` to Prettier and `example/backend/` to google-java-format,
-  each only if installed. Best-effort and non-blocking; the formatters in your
-  build stay the source of truth. Empty `rules` disables it, or remove the
-  PostToolUse entry.
+  The hook is stack-agnostic and ships with *no* map: it reads
+  `$CLAUDE_PROJECT_DIR/.claude/format.map.json` — a file you write, in your
+  project, holding path prefix + extensions + command. No map, no formatting,
+  the same silent no-op as a formatter that isn't installed. Resolving against
+  the project rather than `__file__` is the point: a map next to the hook is the
+  map of whoever *shipped* the plugin, so every consumer would inherit the
+  demo's `example/frontend/` and `example/backend/` rules and be unable to edit
+  them. `example/.claude/format.map.json` is that demo map, kept as reference
+  only — nothing reads it. Best-effort and non-blocking; the formatters in your
+  build stay the source of truth. Remove the PostToolUse entry to drop the hook
+  entirely.
 - **Demand evidence, not assertions.** "It works" is not a result. The evaluator
   already verifies; have it *show* the command it ran and the test summary (a
   screenshot for UI) so a human can trust a verdict without re-running it. It

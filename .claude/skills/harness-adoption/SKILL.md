@@ -32,10 +32,14 @@ directory*, and does not reliably pick up a package file when the session was
 started at the root. So anything an agent must not miss — a destructive command,
 a gate — goes in the root block, not only in the package file.
 
-## 3. `.claude/format.map.json`
+## 3. `.claude/format.map.json` — yours, and not shipped
 
-Path prefix + extension → formatter. The only stack knowledge in `.claude/`.
-`format.py` reads it; empty `rules` disables auto-formatting.
+Path prefix + extension → formatter. `format.py` reads the map from
+`$CLAUDE_PROJECT_DIR/.claude/format.map.json`, so it is a file you write in your
+own project; the harness ships none and no map means no auto-formatting, the same
+as a formatter that is not installed. Shape: `example/.claude/format.map.json`.
+Never patch `format.py` — it owns no stack knowledge and CI asserts it stays
+that way.
 
 ## 4. The boundary, in two files that must stay identical
 
@@ -51,7 +55,7 @@ with the plugin, so a consuming project copies it.
 ## Verifying
 
 `python3 .claude/hooks/test_docs.py .` fails on a PROJECT block that is still
-the example, on an `@import` in `AGENTS.md`, on a formatter map pointing at
-paths that do not exist, and on the context budget. Run it after adopting.
+the example, on an `@import` in `AGENTS.md`, on stack knowledge that has crept
+into `format.py`, and on the context budget. Run it after adopting.
 
 Full walkthrough with the ordered steps: `docs/adopt.md`.

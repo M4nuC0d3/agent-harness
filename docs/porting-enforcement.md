@@ -44,7 +44,7 @@ Two things to know:
   when the project is trusted** (it prompts on first run). For unattended CI, use
   `codex --run-hooks-without-trust`.
 - **Bash-only hooks.** Codex fires `PreToolUse`/`PostToolUse` for Bash only — no
-  file-write or MCP hooks — so format-on-write does not run under Codex; Spotless
+  file-write or MCP hooks — so `format.py` never runs under Codex; Spotless
   and Prettier in `mvn verify` / the build are the source of truth anyway. And
   like every hook, it is a guardrail, not a boundary: the model can write and
   execute a script to sidestep a command matcher. The sandbox is the boundary.

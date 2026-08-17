@@ -5,6 +5,7 @@
 information looks like once the harness is adopted.
 
 ```
+.claude/   format.map.json — the demo's formatter map, reference only
 api/       OpenAPI contract — the demo's single source of truth
 backend/   Quarkus · Java 25 · Maven · DDD   → backend/AGENTS.md
 frontend/  Angular                           → frontend/AGENTS.md
@@ -32,17 +33,43 @@ eventually contradict them.
 
 ## What refers to this directory
 
-Only two things, both by design:
+Exactly one thing: the PROJECT block in the root `AGENTS.md`, between the
+`HARNESS:PROJECT` markers — the demo's facts.
 
-- the PROJECT block in the root `AGENTS.md`, between the `HARNESS:PROJECT`
-  markers — the demo's facts;
-- `.claude/format.map.json`, which maps `example/frontend/` and
-  `example/backend/` to Prettier and google-java-format.
+Nothing in `.claude/`, `.codex/` or the plugin manifests knows this directory
+exists, and `test_docs.py` asserts it. That is the separation the layout is for:
+`git rm -r example/`, replace the PROJECT block, and the harness is yours.
+Ordered walkthrough: `docs/adopt.md`.
 
-Nothing in `.claude/hooks/`, `.claude/agents/`, `.codex/` or the plugin
-manifests knows this directory exists. That is the separation the layout is
-for: `git rm -r example/`, replace the PROJECT block, repoint the formatter map,
-and the harness is yours. Ordered walkthrough: `docs/adopt.md`.
+## The formatter map lives here for the same reason the skills do
+
+`.claude/format.map.json` used to be the one documented exception — *the only
+stack knowledge left in `.claude/`*. It was also a leak: the plugin packages
+`.claude/hooks/format.py`, the hook resolved its map relative to `__file__`, and
+under a plugin install `__file__` is the plugin cache. So every consumer ran a
+write hook driven by *these* prefixes, `example/frontend/` and
+`example/backend/`, against a map sitting somewhere they would never think to
+look and could not usefully edit.
+
+`format.py` now reads `$CLAUDE_PROJECT_DIR/.claude/format.map.json` — the
+consumer's own file, absent by default, absent meaning off. What is left here,
+`.claude/format.map.json`, is a reference copy nothing reads: the demo's Prettier
+and google-java-format rules, kept to show the shape. Copy the shape; do not copy
+the file.
+
+Four checks in `test_docs.py` hold the line, since a comment saying "project data
+goes in the map" never stopped anyone from special-casing a path in the hook: no
+map under `.claude/`, no `__file__` in the resolution, `format.py`'s string
+literals confined to an allowlist of the map's schema and the hook payload, and
+no value from any map appearing in the hook's source.
+
+The prefixes here are also why `test_format.py` exists. A prefix is matched
+against the path *relative to the project root*, anchored at its start — so in
+your own project `example/frontend/` becomes `frontend/`, and that means the
+top-level package and nothing else. It used to be an unanchored substring test on
+the absolute path, under which `frontend/` quietly also meant
+`vendor/legacy/frontend/`, and a prefix of `""` reached files outside the project
+altogether. Neither is visible in review; both are one assertion each.
 
 ## Skills live here, so they do not ship
 

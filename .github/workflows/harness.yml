@@ -44,11 +44,16 @@ jobs:
       - name: Instruction layer (context budget, skills, roles, packaging)
         run: python3 .claude/hooks/test_docs.py .
 
-      # The trace is the one hook output other tooling reads back, and it was
-      # the only hook with no suite at all — the same "tests that nothing runs"
-      # gap this workflow exists to close.
+      # The trace is the one hook output other tooling reads back.
       - name: Trace format (envelope, back-compat fields, never leaks values)
         run: python3 .claude/hooks/test_trace.py .claude/hooks/trace.py
+
+      # format.py was the last hook with no suite, and it held three bugs
+      # because of it: a map read from the plugin cache instead of the project,
+      # an unanchored prefix, and a rule that could reach outside the project.
+      # Same "tests that nothing runs" gap this workflow exists to close.
+      - name: Format-on-write (map resolution, anchored prefixes, never blocks)
+        run: python3 .claude/hooks/test_format.py .claude/hooks/format.py
 
       # A malformed manifest makes the plugin fail to load — silently, from the
       # user's point of view. Cheap to check, expensive to discover downstream.

@@ -103,8 +103,8 @@ contract defines a different error schema).
   `mapstruct-processor`, or MapStruct won't see Lombok's accessors and emits
   empty mappers.
 - Formatting is enforced in `verify` by **Spotless**, configured to run
-  **google-java-format** — the same formatter the auto-format-on-write hook
-  (`.claude/hooks/format.py`, via `.claude/format.map.json`) applies to this tree's Java. Settled here so it
-  isn't a per-PR debate.
+  **google-java-format** — the same formatter the demo's formatter map
+  (`example/.claude/format.map.json`) points the auto-format-on-write hook at for
+  this tree's Java. Settled here so it isn't a per-PR debate.
 - **Do not touch:** `target/`, and anything under the generated-API output
   folder. Regenerate it; don't edit it.

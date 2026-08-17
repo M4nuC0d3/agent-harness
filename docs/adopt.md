@@ -22,7 +22,7 @@ Two mechanisms both tools honour: **inline in the root `AGENTS.md`**, and
 | Applies everywhere, must not be missed | the PROJECT block in `AGENTS.md` | yes |
 | One package: build, tests, conventions | `<pkg>/AGENTS.md` | yes, with a caveat |
 | A workflow you would explain twice | a skill | Claude Code, Codex (plugin) |
-| Formatter wiring | `.claude/format.map.json` | hook-driven, Claude Code |
+| Formatter wiring | `.claude/format.map.json` (yours, not shipped) | hook-driven, Claude Code |
 
 ## What you copy, what you read, what you write
 
@@ -85,17 +85,23 @@ even if it feels package-specific.
 
 2. **Delete or replace `example/`.** It holds the demo's `api/`, `backend/`,
    `frontend/` and the four stack skills. `git rm -r example/` once your own
-   packages exist; nothing in `.claude/`, `.codex/` or the hooks refers to it
-   except `.claude/format.map.json`.
+   packages exist; nothing in `.claude/`, `.codex/` or the hooks refers to it.
 
 3. **Write one `AGENTS.md` per package.** Template:
    `templates/package-AGENTS.template.md`. Commands the sandbox actually
    permits — a wrapper that writes outside the working directory fails as a
    sandbox error and reads like a tooling bug.
 
-4. **Point `.claude/format.map.json` at your paths.** Prefix + extensions +
-   command. Empty `rules` turns auto-formatting off; `format.py` itself needs no
-   edit.
+4. **Write `.claude/format.map.json`, if you want format-on-write.** The
+   harness ships no map: `format.py` reads one from `$CLAUDE_PROJECT_DIR`, and
+   with no map it does nothing. Prefix + extensions + command, shape copied from
+   `example/.claude/format.map.json`. Prefixes are relative to your project root
+   and anchored at its start — the demo's `example/frontend/` becomes plain
+   `frontend/` in a project where that package sits at the top level, and it will
+   not also match a `frontend/` buried somewhere else. `format.py` itself never
+   needs an edit — `test_docs.py` keeps its string literals to a closed
+   vocabulary, so a hard-coded path or formatter name fails CI instead of quietly
+   working.
 
 5. **Trim the boundary to your stack.** Both files carry a `_project_keys` note
    naming the only two keys that describe a stack rather than a policy;

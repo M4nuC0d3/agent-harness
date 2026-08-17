@@ -7,11 +7,20 @@ blocks the tool call (always exits 0). The authoritative formatters run in the
 build — this just keeps the working tree tidy between edits. Remove the
 PostToolUse entry to disable it.
 
-The script is stack-agnostic; **which** formatter runs where is project data and
-lives in `.claude/format.map.json` (see the `$comment` in that file). That split
-is the point: adopting this harness for another stack means editing one JSON
-file, not patching a hook. A missing or malformed map disables formatting
-silently — the same failure mode as a missing formatter.
+The script is stack-agnostic and owns no stack knowledge at all: **which**
+formatter runs where is project data, read from the map at
+`$CLAUDE_PROJECT_DIR/.claude/format.map.json`. Adopting this harness for another
+stack means writing one JSON file, never patching this hook — `test_docs.py`
+asserts that by keeping this file's string literals to a closed vocabulary and
+by failing if any value from a map appears in this source.
+
+The map is resolved against the *project*, never against `__file__`. Under a
+plugin install `__file__` sits in the plugin cache, so a map next to this script
+would be the harness author's map rather than the consumer's — the demo's
+prefixes would silently drive formatting in a project that never asked for them.
+A missing or malformed map disables formatting silently, the same failure mode as
+a missing formatter. Paths are matched relative to the project root, so a rule
+can never reach outside it. `example/.claude/format.map.json` shows the shape.
 """
 import json
 import os
@@ -19,7 +28,7 @@ import shutil
 import subprocess
 import sys
 
-MAP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "format.map.json")
+MAP = os.path.join(os.environ.get("CLAUDE_PROJECT_DIR", "."), ".claude", "format.map.json")
 
 
 def _rules():
@@ -56,12 +65,24 @@ def main():
     if not path or not os.path.isfile(path):
         return 0
 
-    rel = path.replace("\\", "/")
+    # The payload carries an ABSOLUTE path, so a prefix can only mean something
+    # once the path is made relative to the project. Getting this wrong is not
+    # cosmetic: matching a prefix against the absolute path needs an unanchored
+    # substring test, and then "frontend/" also means vendor/legacy/frontend/ and
+    # every node_modules copy of it, while "" reaches files outside the project
+    # entirely. Anchored, a prefix means exactly what the map says it does.
+    root = os.path.abspath(os.environ.get("CLAUDE_PROJECT_DIR", "."))
+    try:
+        rel = os.path.relpath(os.path.abspath(path), root).replace("\\", "/")
+    except ValueError:          # different drive on Windows — not our tree
+        return 0
+    if rel.startswith("../"):   # outside the project — not ours to touch
+        return 0
     ext = os.path.splitext(rel)[1].lower()
 
     for rule in _rules():
         prefix = rule.get("prefix", "")
-        if prefix and not (rel.startswith(prefix) or ("/" + prefix) in rel):
+        if prefix and not rel.startswith(prefix):
             continue
         exts = rule.get("extensions") or []
         if exts and ext not in exts:

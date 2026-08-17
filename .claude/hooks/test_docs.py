@@ -15,6 +15,7 @@ Stdlib only. Run from the repo root, or pass the root as the first argument.
 """
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -36,6 +37,21 @@ NO_MVNW_IN = [".claude/skills", ".claude/agents", ".codex/agents", "example/skil
 # so the two tools would silently disagree about the rules.
 CODEX_AGENTS_LIMIT = 32 * 1024
 MARKERS = ("<!-- HARNESS:PROJECT-START", "<!-- HARNESS:PROJECT-END")
+
+# format.py is the one hook whose whole job is to act on project data, which
+# makes it the one hook where a hard-coded shortcut ("just special-case
+# example/frontend/ until the map is fixed") is tempting and invisible. An
+# allowlist of its string literals closes that door: a blacklist of formatter
+# names would always trail the next stack. The set is the map's schema plus the
+# hook payload's keys — nothing that names a language, path or tool. Adding to
+# it should feel like a decision, because it is one.
+FORMAT_VOCAB = {
+    "rules", "prefix", "extensions", "command", "requires",   # the map's schema
+    "tool_name", "tool_input", "file_path", "path",           # payload keys
+    "Write", "Edit", "MultiEdit",                             # payload values
+    "CLAUDE_PROJECT_DIR", ".claude", "format.map.json",       # where the map lives
+    "{file}", "utf-8", "\\", "/", "../", ".", "", "__main__",  # plumbing
+}
 
 failures: list[str] = []
 
@@ -103,18 +119,63 @@ def main() -> int:
               not (ROOT / ".claude/skills").joinpath("quarkus-testing").exists(),
               "stack skills under .claude/skills/ install for every consumer")
 
-    print("\nFormatter map (the only stack knowledge left in .claude/):")
-    fmap = json.loads(read(".claude/format.map.json"))
-    for rule in fmap.get("rules", []):
-        prefix = rule.get("prefix", "")
-        check(f"format.map prefix exists: {prefix or '<repo root>'}",
-              not prefix or (ROOT / prefix).exists(),
-              "the rule can never match — repoint it or drop it")
-        check(f"format.map rule for {prefix or '<repo root>'} names a command",
-              bool(rule.get("command")), "an empty command formats nothing")
-    check("format.py reads the map instead of hard-coding paths",
-          "format.map.json" in read(".claude/hooks/format.py"),
-          "adopting another stack would mean patching a hook")
+    print("\nFormatter wiring (no stack knowledge under .claude/, in any form):")
+    src = read(".claude/hooks/format.py")
+    check("no formatter map under .claude/",
+          not (ROOT / ".claude/format.map.json").exists(),
+          "a map here ships with the plugin and describes the demo's stack, "
+          "not the consumer's — it belongs in example/ as reference")
+    # Both checks below read *code*, not prose: the docstring is allowed to
+    # explain __file__ and the map's schema, which is why a plain substring
+    # search over the source would fail on its own explanation.
+    tree = ast.parse(src)
+    doc_nodes = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) \
+                    and isinstance(first.value.value, str):
+                doc_nodes.add(id(first.value))
+    literals = {n.value for n in ast.walk(tree)
+                if isinstance(n, ast.Constant) and isinstance(n.value, str)
+                and id(n) not in doc_nodes}
+    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+
+    check("format.py resolves the map in the project, not next to itself",
+          "CLAUDE_PROJECT_DIR" in literals and "__file__" not in names,
+          "under a plugin install __file__ is the plugin cache, so the map "
+          "found there is the harness author's, not the consumer's")
+    stack_words = literals - FORMAT_VOCAB
+    check("format.py's string vocabulary stays closed",
+          not stack_words,
+          f"stack knowledge in the hook — move it to the map: {sorted(stack_words)}")
+
+    ref = ROOT / "example/.claude/format.map.json"
+    if ref.exists():
+        print("\nThe demo's map, as reference (nothing reads it):")
+        fmap = json.loads(ref.read_text(encoding="utf-8"))
+        for rule in fmap.get("rules", []):
+            prefix = rule.get("prefix", "")
+            check(f"format.map prefix exists: {prefix or '<project root>'}",
+                  not prefix or (ROOT / prefix).exists(),
+                  "the rule could never match — repoint it or drop it")
+            check(f"format.map rule for {prefix or '<project root>'} names a command",
+                  bool(rule.get("command")), "an empty command formats nothing")
+        values = {v for rule in fmap.get("rules", [])
+                  for v in [rule.get("prefix"), rule.get("requires"),
+                            *(rule.get("extensions") or []),
+                            *(rule.get("command") or [])]
+                  if v and v != "{file}"}
+        # In code an exact literal is the leak (`startswith("example/frontend/")`).
+        # Anywhere else — a comment parking the value for later — a substring hit
+        # counts, except where the value is itself part of a vocabulary word:
+        # ".json" and ".js" both live inside "format.map.json" and would report
+        # forever. Between the two rules, a real value has nowhere to sit.
+        leaked = sorted(v for v in values if v in literals or
+                        (v in src and not any(v in w for w in FORMAT_VOCAB)))
+        check("no value from the map appears in format.py", not leaked,
+              f"the hook must not know a single one of them: {leaked}")
 
     print("\nCommands the sandbox actually permits:")
     for rel in NO_MVNW_IN:
