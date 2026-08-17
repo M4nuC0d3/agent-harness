@@ -29,6 +29,19 @@ import tempfile
 from pathlib import Path
 
 PREFLIGHT = Path(sys.argv[1] if len(sys.argv) > 1 else "preflight.py").resolve()
+# The default above is relative to the CURRENT directory, so running this suite
+# from the repo root without an argument points it at a path that does not
+# exist. That failure is loud but deeply misleading: `python3 <missing>.py`
+# exits 2, so every exit-code assertion below fails at once and the suite reads
+# like the hook is broken rather than like the invocation is wrong. Cost a
+# real debugging session once. Fail here instead, before any assertion runs.
+if not PREFLIGHT.is_file():
+    sys.exit(
+        f"no hook at {PREFLIGHT}\n"
+        f"Pass the path explicitly:\n"
+        f"    python3 {sys.argv[0]} .claude/hooks/preflight.py"
+    )
+
 
 # Real symptom from the README's reproduction, so a regression reads like the
 # bug report rather than like a test fixture.
@@ -132,6 +145,50 @@ def run_policy(fixture: str | None) -> dict:
         return {"_unparseable": proc.stdout[:200]}
 
 
+def run_seccomp(helper: str) -> dict:
+    """Run preflight against a project whose sandbox.seccomp.applyPath is set.
+
+    `helper` is one of:
+      "exec"     the vendored binary is present and executable — the happy path
+      "noexec"   present, execute bit missing (NixOS #510938: exit 126)
+      "missing"  applyPath points somewhere that does not exist
+      "unset"    no applyPath at all — preflight must claim nothing
+
+    The policy is otherwise complete, so anything this reports comes from the
+    seccomp probe and not from the policy gate.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        binder = root / "bin"
+        binder.mkdir()
+        for name in ("bwrap", "socat"):
+            (binder / name).write_text(WORKING_BWRAP)
+            (binder / name).chmod(0o755)
+
+        settings = json.loads(json.dumps(POLICY_FIXTURES["complete"]))
+        if helper != "unset":
+            target = root / "vendor" / "apply-seccomp"
+            if helper != "missing":
+                target.parent.mkdir(parents=True)
+                target.write_text("#!/bin/sh\nexit 0\n")
+                target.chmod(0o755 if helper == "exec" else 0o644)
+            settings["sandbox"]["seccomp"] = {"applyPath": str(target)}
+
+        project = root / "project"
+        (project / ".claude").mkdir(parents=True)
+        (project / ".claude" / "settings.json").write_text(json.dumps(settings))
+        env = {**os.environ, "PATH": str(binder), "HOME": str(root / "home"),
+               "CLAUDE_PROJECT_DIR": str(project)}
+        env.pop("HARNESS_SKIP_PREFLIGHT", None)
+        proc = subprocess.run(
+            [sys.executable, str(PREFLIGHT)], input="{}",
+            capture_output=True, text=True, env=env, timeout=90)
+    try:
+        return json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        return {"_unparseable": proc.stdout[:200]}
+
+
 def main() -> int:
     if platform.system() != "Linux":
         print(f"  [skip] not Linux ({platform.system()}) — preflight returns "
@@ -218,6 +275,42 @@ def main() -> int:
               complete.get("continue", True) is True
               and "WARNING" not in str(complete.get("systemMessage", "")),
               f"got {str(complete)[:140]}")
+
+    print("\nThe seccomp helper — the half of the boundary bwrap doesn't cover:")
+    if managed.exists():
+        print(f"  [skip] {managed} exists — it would outrank the fixtures")
+    else:
+        good = run_seccomp("exec")
+        check("a present, executable helper is not flagged",
+              good.get("continue", True) is True
+              and "seccomp" not in str(good.get("systemMessage", "")).lower(),
+              f"got {str(good)[:140]}")
+
+        broken = run_seccomp("noexec")
+        check("a helper without the execute bit is WARNED about",
+              "not executable" in str(broken.get("systemMessage", "")),
+              f"got {str(broken)[:180]}")
+        # The whole point of the three-state split. This failure mode is real
+        # but the probe cannot prove the sandbox is down from it, and a gate
+        # that stops sessions on an inference gets switched off.
+        check("...but the session still STARTS — this probe never blocks",
+              broken.get("continue", True) is True,
+              "warn-only is the contract; see PROBE_SECCOMP_HELPER")
+        check("...and the warning names the excludedCommands pairing",
+              "excludedCommands" in str(broken.get("systemMessage", "")),
+              "the exposure is unsandboxed leftovers, not the dead commands")
+
+        gone = run_seccomp("missing")
+        check("an applyPath pointing nowhere is WARNED about, not blocked",
+              gone.get("continue", True) is True
+              and "does not exist" in str(gone.get("systemMessage", "")),
+              f"got {str(gone)[:180]}")
+
+        unset = run_seccomp("unset")
+        check("no applyPath configured claims nothing either way",
+              unset.get("continue", True) is True
+              and "proved nothing" in str(unset.get("systemMessage", "")),
+              f"got {str(unset)[:180]}")
 
     print("\nThe escape hatch still works:")
     env_decision = subprocess.run(

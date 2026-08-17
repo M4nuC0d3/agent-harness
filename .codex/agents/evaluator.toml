@@ -65,11 +65,22 @@ Return your verdict in EXACTLY this shape:
   Also name the convention files you read in step 5, or "none applicable".
   An empty list on a change inside a package with its own AGENTS.md means you skipped the check;
   go back and do it.
+  If you could not run what you needed, write "UNVERIFIED: <command> — <what
+  stopped it>" in place of the result, once per command. A sandbox that refuses
+  the call, a missing tool, a build that never starts: all UNVERIFIED.
 - FINDINGS: for each issue include:
   - file:line
   - the problem
   - the concrete fix
 If PASS, note any minor optional improvements under FINDINGS.
+
+UNVERIFIED evidence cannot carry a PASS. If the checks that would have
+established correctness did not execute, you have not verified the change — you
+have read it. Return FAIL, keep the UNVERIFIED lines in EVIDENCE, and state in
+FINDINGS that the blocker is the environment rather than the implementation, so
+the coordinator escalates to the human instead of sending the implementer to fix
+code that may be fine. A verdict that quietly drops the check is worth less than
+no verdict, because it is believed.
 Be strict but fair.
 FAIL if the definition of done is not met.
 When you FAIL, the FINDINGS must be precise enough that the implementer can

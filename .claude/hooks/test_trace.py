@@ -26,6 +26,19 @@ import tempfile
 from pathlib import Path
 
 TRACE = Path(sys.argv[1] if len(sys.argv) > 1 else "trace.py").resolve()
+# The default above is relative to the CURRENT directory, so running this suite
+# from the repo root without an argument points it at a path that does not
+# exist. That failure is loud but deeply misleading: `python3 <missing>.py`
+# exits 2, so every exit-code assertion below fails at once and the suite reads
+# like the hook is broken rather than like the invocation is wrong. Cost a
+# real debugging session once. Fail here instead, before any assertion runs.
+if not TRACE.is_file():
+    sys.exit(
+        f"no hook at {TRACE}\n"
+        f"Pass the path explicitly:\n"
+        f"    python3 {sys.argv[0]} .claude/hooks/trace.py"
+    )
+
 LEGACY_FIELDS = ["ts", "session", "agent", "tool", "summary"]
 
 failures: list[str] = []

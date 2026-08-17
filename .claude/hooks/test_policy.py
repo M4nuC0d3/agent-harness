@@ -18,6 +18,19 @@ import sys
 from pathlib import Path
 
 SETTINGS = Path(sys.argv[1] if len(sys.argv) > 1 else ".claude/settings.json")
+# The default above is relative to the CURRENT directory, so running this suite
+# from the repo root without an argument points it at a path that does not
+# exist. That failure is loud but deeply misleading: `python3 <missing>.py`
+# exits 2, so every exit-code assertion below fails at once and the suite reads
+# like the settings file is broken rather than like the invocation is wrong. Cost a
+# real debugging session once. Fail here instead, before any assertion runs.
+if not SETTINGS.is_file():
+    sys.exit(
+        f"no settings file at {SETTINGS}\n"
+        f"Pass the path explicitly:\n"
+        f"    python3 {sys.argv[0]} .claude/settings.json"
+    )
+
 
 
 def check(label: str, condition: bool, why: str = "") -> bool:
@@ -33,6 +46,41 @@ def main() -> int:
     hooks = s.get("hooks", {})
     ok = True
 
+    print("Credential paths are covered on every layer that can see them:")
+    # The three controls bind different callers, and each one has a blind spot
+    # the others cover:
+    #   sandbox.credentials / filesystem.denyRead  bind SANDBOXED commands only
+    #   permissions Read(...) deny                 binds Claude's file tools and
+    #                                              the Bash file commands Claude
+    #                                              Code recognises — including
+    #                                              when a command is excluded
+    #                                              from the sandbox
+    # A path listed in only one of them is protected against one caller and open
+    # to the other, which is exactly how ~/.ssh stayed readable while sitting in
+    # denyRead the whole time. Assert the two lists mirror each other so the gap
+    # cannot reopen silently.
+    creds = [e.get("path") for e in
+             (sandbox.get("credentials") or {}).get("files", [])
+             if isinstance(e, dict) and e.get("mode") == "deny"]
+    ok &= check("sandbox.credentials denies the credential paths",
+                {"~/.ssh", "~/.aws", "~/.gnupg"} <= set(creds),
+                f"got {creds}")
+    read_rules = " ".join(r for r in deny if r.startswith("Read("))
+    missing = [c for c in creds if c.rstrip("/") not in read_rules]
+    ok &= check(
+        "...and every one of them also has a Read deny rule",
+        not missing,
+        f"{missing} are denied only for sandboxed commands — an excluded "
+        "command or a broken sandbox reads them freely",
+    )
+    deny_read = " ".join(sandbox.get("filesystem", {}).get("denyRead", []))
+    ok &= check(
+        "project secrets are in denyRead, not only in Read rules",
+        all(x in deny_read for x in (".env", "secrets")),
+        "Read rules do not reach a subprocess that opens the file itself",
+    )
+
+    print()
     print("The sandbox is the boundary:")
     ok &= check("sandbox.enabled", sandbox.get("enabled") is True)
     ok &= check(

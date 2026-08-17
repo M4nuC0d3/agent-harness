@@ -63,7 +63,8 @@ Pause and ask — don't push forward:
    sequence the rest. This plain pipeline is the default — only fan a step
    out further (below) when the decision matrix says so.
 3. **Verify** — the evaluator gates every result. On FAIL, return concrete
-   feedback; after 2 revisions, stop and escalate.
+   feedback; after 2 revisions, stop and escalate. A FAIL whose EVIDENCE is
+   UNVERIFIED is an environment blocker: escalate, never re-dispatch.
 4. **Integrate** — combine verified results, check consistency, summarize.
 
 **Loop vs. graph.** Fanning the evaluator out into parallel focus-scoped
