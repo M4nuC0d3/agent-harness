@@ -58,7 +58,8 @@ exclude_tmpdir_env_var = false
 
 # Command policy (deny curl/wget/sudo/gh-pr-merge; catch rm -rf ~, force-push to
 # main, curl|sh, …), the per-session tool-call ceiling and the audit trace live
-# in the SAME hook scripts under .claude/hooks/, registered in .codex/hooks.json.
+# in the SAME hook scripts under .claude/hooks/, registered in .codex/hooks.json
+# — one file for both install routes, see docs/porting-enforcement.md.
 # Codex additionally keeps .git/ and .codex/ read-only in workspace-write mode.
 
 [agents]

@@ -50,7 +50,13 @@ FORMAT_VOCAB = {
     "tool_name", "tool_input", "file_path", "path",           # payload keys
     "Write", "Edit", "MultiEdit",                             # payload values
     "CLAUDE_PROJECT_DIR", ".claude", "format.map.json",       # where the map lives
-    "{file}", "utf-8", "\\", "/", "../", ".", "", "__main__",  # plumbing
+    "{file}", "utf-8", "\\", "/", "../", ".", "", "\n", "\"", "'", "__main__",
+    "apply_patch",                                            # Codex's tool name
+    "git", "rev-parse", "--show-toplevel",                    # the root fallback
+    # Codex's patch envelope. Payload grammar, not project data — these say how
+    # an edit is reported, never which formatter runs or where.
+    r"^\*\*\* (?:Add|Update) File: (.+)$",
+    r"^\*\*\* Move to: (.+)$",
 }
 
 failures: list[str] = []
@@ -282,38 +288,53 @@ def main() -> int:
           isinstance(skills_rel, str)
           and (ROOT / skills_rel.removeprefix("./")).is_dir(),
           "a string directory path, not an array — the skills would not load")
-    # The install cache (~/.codex/plugins/cache/) is not a git checkout, so the
-    # git-root path .codex/hooks.json uses resolves to nothing there. The hook
-    # then no-ops, and an absent PreToolUse hook blocks nothing.
+    # There used to be two Codex hook files, because neither anchor works in both
+    # places: the install cache (~/.codex/plugins/cache/) is not a git checkout,
+    # so a git-root path resolves to nothing there, and ${PLUGIN_ROOT} is unset
+    # in a project that just copied .codex/ in. Two files meant two chances to
+    # forget one — which is how format.py ended up registered in neither.
     #
-    # This file lives at .codex-plugin/hooks.json, not the repo-root
-    # hooks/hooks.json — that path is Claude Code's own default plugin-hook
-    # location (docs/en/plugins-reference), and hooks merge across sources
-    # rather than the manifest's inline "hooks" replacing it. A root-level
-    # hooks/hooks.json written for Codex (${PLUGIN_ROOT}) would load a SECOND
-    # time under Claude Code, where ${PLUGIN_ROOT} is never set — it resolves
-    # empty, and every hook command runs against /.claude/hooks/*.py instead
-    # of the plugin's real install directory.
-    check("Codex plugin.json points hooks at a file that exists",
-          codex_plugin.get("hooks") == "./hooks.json"
-          and (ROOT / ".codex-plugin/hooks.json").exists(),
-          "no hooks entry, or it points nowhere — Codex would fall back to "
-          "the repo-root hooks/hooks.json default location, which collides "
-          "with Claude Code's own")
+    # One file with a shell default covers both: Codex expands the command
+    # string, ${PLUGIN_ROOT:-...} takes the cache path when set and falls back to
+    # the git root when not.
+    check("exactly one Codex hooks file",
+          (ROOT / ".codex/hooks.json").exists()
+          and not (ROOT / ".codex-plugin/hooks.json").exists(),
+          "a second file drifts from the first — the events it registers are "
+          "the ones the other one is missing")
+    check("Codex plugin.json points hooks at the one file",
+          codex_plugin.get("hooks") == "./.codex/hooks.json",
+          "no hooks entry, or it points elsewhere — Codex would fall back to "
+          "the plugin root's hooks/hooks.json default, which is also Claude "
+          "Code's default and would load twice")
+    # A Codex-flavoured file at the plugin root's hooks/hooks.json is discovered
+    # by BOTH tools, and under Claude Code ${PLUGIN_ROOT} is never set: it
+    # resolves empty and every command runs against /.claude/hooks/*.py.
     check("no repo-root hooks/hooks.json shadows Claude Code's default hook path",
           not (ROOT / "hooks/hooks.json").exists(),
           "Claude Code auto-discovers hooks/hooks.json in the plugin root "
           "and merges it with plugin.json's inline hooks — a Codex-only file "
-          "there double-registers guard.py etc. with an unresolved "
-          "${PLUGIN_ROOT}")
-    codex_hooks = read(".codex-plugin/hooks.json")
-    check("plugin hooks anchor on ${PLUGIN_ROOT}, not the git root",
-          "PLUGIN_ROOT" in codex_hooks and "rev-parse" not in codex_hooks,
-          "hooks would not resolve from the plugin install cache")
-    referenced = sorted(set(re.findall(r"\.claude/hooks/\w+\.py", codex_hooks)))
-    check("plugin hooks register the three shared scripts",
-          len(referenced) == 3, f"registers {referenced}")
-    for rel in referenced:
+          "there double-registers guard.py with an unresolved ${PLUGIN_ROOT}")
+    codex_hooks = read(".codex/hooks.json")
+    check("Codex hooks resolve in both the install cache and a checkout",
+          codex_hooks.count("${PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}")
+          == codex_hooks.count(".claude/hooks/"),
+          "every command needs the fallback anchor, or it works in one "
+          "install route and silently no-ops in the other")
+    referenced = sorted(set(re.findall(r"\.claude/hooks/(\w+)\.py", codex_hooks)))
+    claude_hooked = sorted(set(re.findall(r"\.claude/hooks/(\w+)\.py",
+                                          read(".claude/settings.json"))))
+    check("Codex registers the same hook scripts as Claude Code",
+          referenced == claude_hooked,
+          f"Codex {referenced} vs Claude Code {claude_hooked} — enforcement "
+          f"differs by tool, which is the thing this repo claims it does not do")
+    # Codex reports tool_name apply_patch for every edit, whatever the matcher
+    # said, so the matcher and the hook's accepted names must both cover it.
+    check("the write matcher names Codex's patch tool",
+          "apply_patch" in codex_hooks,
+          "matching only Edit|Write would still fire, but a hook that checks "
+          "tool_name against Claude Code's names would then drop the event")
+    for rel in (f".claude/hooks/{name}.py" for name in referenced):
         check(f"plugin hook script exists: {rel}", (ROOT / rel).exists(),
               "the hook would silently no-op")
 

@@ -155,9 +155,10 @@ install cache is keyed by marketplace name, so equal names would put two sets of
 metadata in one directory. `test_docs.py` asserts they stay different.
 
 > **Developing on this repo? Then don't also have the plugin installed.** The
-> working tree registers the hooks through `.codex/hooks.json`; the plugin
-> registers the same three through `hooks/hooks.json`. Both fire, so every hook
-> runs twice — half the tool-call budget, doubled trace lines, silently. The
+> working tree registers the hooks through `.codex/hooks.json`, and the plugin
+> registers the same file again from its own install root. Codex loads matching
+> hooks from every source, so each one runs twice — half the tool-call budget,
+> doubled trace lines, files formatted twice, silently. The
 > Claude-side version of this trap is assertable, because `enabledPlugins` lives
 > in `.claude/settings.json`, in the repo. This one is not: Codex keeps the
 > enabled state in `~/.codex/config.toml`, user-level, where no test in this
@@ -326,22 +327,21 @@ settings.consumer.example.json  what a consuming project copies: same boundary,
 .codex-plugin/plugin.json the same, for Codex (`skills` takes ONE directory path;
                           there is no `agents` field, so the roles stay a copy)
 .agents/plugins/marketplace.json the catalog `codex plugin marketplace add` reads
-.codex-plugin/hooks.json  Codex plugin hook registration → the same three
-                          scripts, resolved via ${PLUGIN_ROOT} (the install
-                          cache is not a git checkout, so the git-root path
-                          .codex/hooks.json uses would not resolve there).
-                          Lives under .codex-plugin/, not the repo-root
-                          hooks/hooks.json — that path is Claude Code's own
-                          default plugin-hook location too, and Claude Code
-                          merges it with plugin.json's inline hooks instead
-                          of replacing them, so a root-level file written for
-                          Codex would double-register with an unresolved
-                          ${PLUGIN_ROOT} under Claude Code.
 .github/workflows/harness.yml   runs all six suites on every push and PR
 .codex/config.toml        Codex sandbox + approval policy + [agents] switch
 .codex/agents/*.toml      the three roles as native Codex sub-agents (own copy;
                           same responsibilities as .claude/agents/*.md)
-.codex/hooks.json         Codex hook registration → the shared .claude/hooks/ scripts
+.codex/hooks.json         Codex hook registration → all four shared .claude/hooks/
+                          scripts, for BOTH install routes: commands anchor on
+                          ${PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}, so
+                          the same file resolves from the plugin install cache
+                          (not a git checkout) and from a project that copied
+                          .codex/ in. .codex-plugin/plugin.json points at it.
+                          Deliberately NOT at the repo-root hooks/hooks.json —
+                          that is Claude Code's own default plugin-hook path,
+                          which it merges with plugin.json's inline hooks, so a
+                          Codex file there would load twice under Claude Code
+                          with ${PLUGIN_ROOT} unset
 docs/adopt.md             replacing the demo with a real project, in order
 docs/porting-enforcement.md  how the same enforcement is wired for Codex
 docs/graph-pipeline.md    full decision-matrix criteria + graph topology (AGENTS.md keeps only the summary)

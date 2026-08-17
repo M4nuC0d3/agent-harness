@@ -33,21 +33,35 @@ Two files, both shipped:
   `settings.json` sandbox + ask layer. Egress is on via `[sandbox_workspace_write]`;
   a commented `[permissions.harness]` block gives a domain allowlist mirroring
   `.claude/settings.json` if your Codex build accepts the (beta) permissions model.
-- **`.codex/hooks.json`** — registers the shared `preflight.py` / `guard.py` /
-  `trace.py` on `SessionStart` / `PreToolUse` / `PostToolUse`, pointing at
-  `.claude/hooks/` by git-root path. Codex's `PreToolUse` stdin and exit-2 block
-  match Claude Code, so the scripts run unchanged.
+- **`.codex/hooks.json`** — registers all four shared scripts: `preflight.py`
+  on `SessionStart`, `guard.py` on `PreToolUse`, and `trace.py` plus `format.py`
+  on `PostToolUse` (matchers `Bash` and `apply_patch|Edit|Write`). Codex's
+  `PreToolUse` stdin and exit-2 block match Claude Code, so the scripts run
+  unchanged. This is also the file the Codex *plugin* manifest points at — see
+  *One hooks file, two install routes* below.
 
 Two things to know:
 
 - **Trust.** Codex loads project-local `.codex/` config, hooks and rules **only
   when the project is trusted** (it prompts on first run). For unattended CI, use
   `codex --run-hooks-without-trust`.
-- **Bash-only hooks.** Codex fires `PreToolUse`/`PostToolUse` for Bash only — no
-  file-write or MCP hooks — so `format.py` never runs under Codex; Spotless
-  and Prettier in `mvn verify` / the build are the source of truth anyway. And
-  like every hook, it is a guardrail, not a boundary: the model can write and
-  execute a script to sidestep a command matcher. The sandbox is the boundary.
+- **Write hooks, and the shape they arrive in.** Codex once fired
+  `PreToolUse`/`PostToolUse` for Bash only, which is why this file used to say
+  `format.py` could not run there. It fires for `apply_patch` now, and the
+  matcher accepts `apply_patch`, `Edit` or `Write`. The payload is *not* Claude
+  Code's, though: `tool_name` is reported as `apply_patch` whatever the matcher
+  said, and there is no `file_path` — the patch envelope arrives in
+  `tool_input.command` and can name several files. `format.py` parses both
+  shapes, the same way `guard.py` reads the command from either. Build-time
+  formatters remain the source of truth either way.
+- **Guard still watches Bash only.** Now that writes are hookable, `guard.py`
+  *could* gate `apply_patch` too. It does not: its rules are written against
+  shell commands, and a patch envelope is a different grammar that would need
+  its own rules and its own tests. Deliberate gap, not an oversight.
+- **A guardrail, not a boundary.** The model can write and execute a script to
+  sidestep a command matcher, and Codex's own docs call tool hooks a useful
+  guardrail rather than a complete enforcement boundary. The sandbox is the
+  boundary.
 
 ### Shipping it as a Codex plugin
 
@@ -61,46 +75,46 @@ own hook registration — not because the hooks differ, but because the paths do
   `codex plugin marketplace add M4nuC0d3/agent-harness` reads. Codex also reads
   `.claude-plugin/marketplace.json` as a legacy-compatible source, so both are
   discoverable; only the Codex one carries `policy` and `category`.
-- **`.codex-plugin/hooks.json`**, wired via `"hooks": "./hooks.json"` in
-  `.codex-plugin/plugin.json`. It registers the same `preflight.py` /
-  `guard.py` / `trace.py`, but resolves them via **`${PLUGIN_ROOT}`**.
-  `.codex/hooks.json` uses `$(git rev-parse --show-toplevel)`, which is
-  correct for a checkout and wrong for an install: plugins live in
-  `~/.codex/plugins/cache/…`, which is not a git repository. Codex also sets
-  `CLAUDE_PLUGIN_ROOT` for compatibility.
+### One hooks file, two install routes
 
-  It does **not** live at the repo-root `hooks/hooks.json` default path —
-  that path is Claude Code's own default plugin-hook location, and this repo
-  is *also* a Claude Code plugin from the same root (`.claude-plugin/marketplace.json`
-  sets `"source": "./"`). Claude Code merges a plugin's `hooks/hooks.json`
-  with `plugin.json`'s inline `hooks` block rather than one replacing the
-  other, so a Codex-only file at that path would load a second time under
-  Claude Code, where `${PLUGIN_ROOT}` is never set — it resolves to an empty
-  string, and every hook runs against `/.claude/hooks/*.py` instead of the
-  plugin's real install directory. That was a real bug in this repo, not a
-  hypothetical: installing the plugin in Claude Code produced exactly that
-  broken path. Anchoring the file outside `hooks/` sidesteps Claude Code's
-  auto-discovery entirely.
+There used to be two: `.codex/hooks.json` anchored on
+`$(git rev-parse --show-toplevel)`, correct for a checkout and wrong for an
+install (plugins live in `~/.codex/plugins/cache/…`, which is not a git
+repository), and `.codex-plugin/hooks.json` anchored on `${PLUGIN_ROOT}`, which
+is unset in a project that copied `.codex/` in. Neither anchor works in both
+places, so the file was duplicated — and two files meant two chances to forget
+one. That is exactly what happened: when write hooks became available, the
+formatter got registered in neither.
 
-Three consequences:
+One file covers both, because Codex expands the command string:
 
-- **Never both.** A project that copies `.codex/` *and* installs the plugin runs
-  every hook twice — half the tool-call budget, doubled trace lines, silently.
-  Same trap as `.claude/settings.json` vs. the consumer example, with one
-  difference: that one is assertable (`enabledPlugins` is in the repo), this one
-  is not. Codex keeps the enabled state in `~/.codex/config.toml`, user-level,
-  so no check in this repo can see it — including for this repo itself, where
-  `.codex/hooks.json` and an installed `hooks/hooks.json` would both fire.
-- **Two catalogs, two names.** Codex reads `.agents/plugins/marketplace.json`
-  and, legacy-compatible, `.claude-plugin/marketplace.json`, so this repo is
-  discoverable twice. The install cache is keyed by marketplace name
-  (`~/.codex/plugins/cache/$MARKETPLACE_NAME/$PLUGIN_NAME/$VERSION/`), so the two
-  must not share one: equal names mean one directory holding two different sets
-  of metadata, with no documented winner. Hence `m4nuc0d3-harness-codex`, and a
-  `test_docs.py` check that they stay distinct.
-- **Trust is separate from install.** Plugin-bundled hooks are non-managed:
-  Codex skips them until the user reviews and trusts the definition. An
-  installed-but-untrusted plugin has no hook layer at all.
+```
+${PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/.claude/hooks/format.py
+```
+
+`${PLUGIN_ROOT}` when Codex loads this from an install, the git root otherwise.
+`.codex-plugin/plugin.json` points at it with `"hooks": "./.codex/hooks.json"`;
+manifest hook paths are resolved against the plugin root and must stay inside it,
+which `.codex/` does. Codex also sets `CLAUDE_PLUGIN_ROOT` for compatibility, so
+either variable name would do — `PLUGIN_ROOT` is the native one.
+
+It deliberately does **not** live at the repo-root `hooks/hooks.json` default
+path — that path is Claude Code's own default plugin-hook location, and this repo
+is *also* a Claude Code plugin from the same root (`.claude-plugin/marketplace.json`
+sets `"source": "./"`). Claude Code merges a plugin's `hooks/hooks.json` with
+`plugin.json`'s inline `hooks` block rather than one replacing the other, so a
+Codex-only file at that path would load a second time under Claude Code, where
+`${PLUGIN_ROOT}` is never set: it resolves to an empty string and every hook runs
+against `/.claude/hooks/*.py` instead of the plugin's real install directory. That
+was a real bug here, not a hypothetical. `test_docs.py` asserts the path stays
+empty, that only one Codex hooks file exists, that every command carries the
+fallback anchor, and that Codex and Claude Code register the *same* set of
+scripts — the drift that hid the missing formatter is now a failing check.
+
+One caveat the merge does not remove: Codex loads matching hooks from **all**
+sources. A project that both copies `.codex/` in and installs the plugin
+registers each hook twice, and both copies run.
+
 - **`guard.py`'s chaining check no-ops here.** It reads `excludedCommands` from
   the project's `.claude/settings.json`; a Codex-only project has none, so the
   prefix list is empty and the check skips (fail-open, as its header documents).
