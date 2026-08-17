@@ -83,6 +83,55 @@ def check(label: str, ok: bool, why: str = "") -> bool:
     return ok
 
 
+
+WORKING_BWRAP = "#!/bin/sh\nexit 0\n"
+
+# A project settings.json that carries the boundary, and two that do not.
+POLICY_FIXTURES = {
+    "complete": {
+        "sandbox": {"enabled": True, "allowUnsandboxedCommands": False},
+        "permissions": {"deny": [
+            "Read(./.env)", "Read(./secrets/**)",
+            "Bash(curl:*)", "Bash(wget:*)", "Bash(sudo:*)",
+        ]},
+    },
+    # The plugin-install gap: hooks and roles present, boundary never copied.
+    "no_sandbox": {"permissions": {"deny": ["Read(./.env)"]}},
+    # Boundary on, second layer thin: warn, never block.
+    "thin_rules": {"sandbox": {"enabled": True, "allowUnsandboxedCommands": False}},
+}
+
+
+def run_policy(fixture: str | None) -> dict:
+    """Run preflight against a synthetic project + HOME, with a working bwrap.
+
+    HOME is redirected so a developer's own ~/.claude/settings.json cannot make
+    this pass or fail by accident — the same reason the suite fakes bwrap.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        binder = root / "bin"
+        binder.mkdir()
+        for name in ("bwrap", "socat"):
+            (binder / name).write_text(WORKING_BWRAP)
+            (binder / name).chmod(0o755)
+        project = root / "project"
+        (project / ".claude").mkdir(parents=True)
+        if fixture is not None:
+            (project / ".claude" / "settings.json").write_text(
+                json.dumps(POLICY_FIXTURES[fixture]))
+        env = {**os.environ, "PATH": str(binder), "HOME": str(root / "home"),
+               "CLAUDE_PROJECT_DIR": str(project)}
+        env.pop("HARNESS_SKIP_PREFLIGHT", None)
+        proc = subprocess.run(
+            [sys.executable, str(PREFLIGHT)], input="{}",
+            capture_output=True, text=True, env=env, timeout=90)
+    try:
+        return json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        return {"_unparseable": proc.stdout[:200]}
+
+
 def main() -> int:
     if platform.system() != "Linux":
         print(f"  [skip] not Linux ({platform.system()}) — preflight returns "
@@ -139,6 +188,36 @@ def main() -> int:
     expect("no bwrap at all blocks", run_preflight(None), False, "missing sandbox")
     expect("no socat blocks",
            run_preflight(FAKE["works"], socat=False), False, "missing sandbox")
+
+    print("\nThe policy gate — a green probe is not a configured boundary:")
+    managed = Path("/etc/claude-code/managed-settings.json")
+    if platform.system() != "Linux":
+        print("  [skip] policy gate cases assume the Linux probe path")
+    elif managed.exists():
+        # The managed file outranks the fixture and cannot be pointed elsewhere.
+        print(f"  [skip] {managed} exists — it would outrank the fixtures")
+    else:
+        no_sandbox = run_policy("no_sandbox")
+        check("a project with no sandbox block is STOPPED",
+              no_sandbox.get("continue") is False,
+              f"got {str(no_sandbox)[:140]}")
+        check("...and the reason names the configuration gap, not the machine",
+              "CONFIGURATION gap" in str(no_sandbox.get("stopReason", "")),
+              "the fix is copying a settings file, not installing bwrap")
+        missing = run_policy(None)
+        check("no settings.json at all is STOPPED too",
+              missing.get("continue") is False,
+              "an absent policy is an absent boundary")
+        thin = run_policy("thin_rules")
+        check("a sandboxed project with thin deny rules is WARNED, not stopped",
+              thin.get("continue", True) is True
+              and "deny rule" in str(thin.get("systemMessage", "")),
+              f"got {str(thin)[:140]}")
+        complete = run_policy("complete")
+        check("a correctly configured project starts clean",
+              complete.get("continue", True) is True
+              and "WARNING" not in str(complete.get("systemMessage", "")),
+              f"got {str(complete)[:140]}")
 
     print("\nThe escape hatch still works:")
     env_decision = subprocess.run(

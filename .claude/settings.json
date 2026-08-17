@@ -1,11 +1,24 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "_project_keys": [
+    "PROJECT-SPECIFIC KEYS \u2014 the only two entries below that describe a stack rather than a policy. Everything else is the harness's boundary and should survive adoption unchanged.",
+    "sandbox.excludedCommands: the current values (docker, mvn, npm) are the demo project's. Each entry skips the sandbox for the WHOLE shell line, chained commands included \u2014 so remove what you do not need before adding yours. guard.py's chaining check reads this list.",
+    "sandbox.network.allowedDomains: the registries the demo's build needs.",
+    "They stay inline because settings.json has no import mechanism \u2014 the same reason the project block in AGENTS.md is inline. docs/adopt.md step 5."
+  ],
   "sandbox": {
     "enabled": true,
     "failIfUnavailable": true,
     "autoAllowBashIfSandboxed": false,
     "allowUnsandboxedCommands": false,
-    "excludedCommands": ["docker *", "mvn *", "npm *", "find *", "ls *", "grep *"],
+    "excludedCommands": [
+      "docker *",
+      "mvn *",
+      "npm *",
+      "find *",
+      "ls *",
+      "grep *"
+    ],
     "enableWeakerNestedSandbox": false,
     "network": {
       "allowedDomains": [
@@ -19,7 +32,9 @@
         "github.com",
         "*.githubusercontent.com"
       ],
-      "allowUnixSockets": ["/var/run/docker.sock"],
+      "allowUnixSockets": [
+        "/var/run/docker.sock"
+      ],
       "allowAllUnixSockets": false,
       "allowLocalBinding": false
     },

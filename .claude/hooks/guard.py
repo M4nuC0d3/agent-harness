@@ -9,6 +9,12 @@ Layering (as Anthropic documents it):
                paths, domains and whole tools.
   this hook    a session budget, plus an opt-in accident catcher.
 
+SCOPE: registered with matcher "Bash" in .claude/settings.json and
+.codex/hooks.json, so it sees shell calls and nothing else. The budget below is
+therefore a *shell-call* budget. It was previously named and documented as a
+tool-call budget, which overstated it — a Write, a Read or an MCP call never
+reaches this file and is never counted.
+
 It also closes one hole the sandbox itself leaves open: `excludedCommands` is a
 prefix match on the whole shell line, so anything chained after an excluded
 command escapes with it. See check_excluded_chaining.
@@ -42,12 +48,12 @@ read a half-written file. check_budget serializes the update under an flock (on
 POSIX) and always writes atomically (all platforms) — see _counter_lock /
 _atomic_write_json.
 
-Portability: this same script is wired into Claude Code (PreToolUse), Codex
-(PreToolUse — identical stdin fields and exit-2-blocks semantics) and Cursor
-(beforeShellExecution — the command sits at top-level `command`, and exit 2 also
-blocks). `extract_command` reads both shapes, and exit 2 + stderr is the one
-blocking signal all three honor, so there is a single copy — see
-`.codex/hooks.json`, `.cursor/hooks.json`, and docs/porting-enforcement.md.
+Portability: this same script is wired into Claude Code (PreToolUse) and Codex
+(PreToolUse — identical stdin fields and exit-2-blocks semantics), registered in
+`.claude/settings.json` and `.codex/hooks.json`. `extract_command` also reads the
+other common shape, a top-level `command` with no tool_name, so a third tool with
+the same stdin+exit-2 contract needs no fork — only a registration. See
+docs/porting-enforcement.md.
 
 Stdlib only. Config is right here — no second file to keep in sync.
 """
@@ -71,7 +77,13 @@ except ImportError:  # pragma: no cover - platform dependent
 # A stop condition the model cannot ignore. No permission rule can count calls.
 # 0 disables. The counter is written atomically and, on POSIX, updated under an
 # flock, so concurrent hook processes can't lose counts or read a torn file.
-MAX_TOOL_CALLS_PER_SESSION = 400
+#
+# Counts SHELL calls only (see SCOPE above). Tune it from your own traces rather
+# than trusting this default:
+#   jq -s 'group_by(.session) | map(length) | max' .agent/trace.jsonl
+# A run that has stopped converging spends shell calls without changing the
+# verdict; the number to pick is a little above your normal completed task.
+MAX_SHELL_CALLS_PER_SESSION = 150
 STATE_DIR = Path(".agent")
 
 # Opt-in accident catcher. NOT a security mechanism — see the module docstring.
@@ -80,32 +92,59 @@ ACCIDENT_CATCHER = True
 
 # What to do when the guard cannot evaluate an event at all — unparseable JSON,
 # or an unexpected internal error.
-#   True  -> BLOCK (exit 2) and say why. Matches the harness's fail-closed
-#            posture (preflight.py stops the session when the boundary is
-#            absent) and is never silent.
+#   True  -> BLOCK (exit 2) and say why.
 #   False -> ALLOW (exit 0) but warn on stderr, so the degradation is visible.
-# Trade-off for True: a *systematic* parse failure (e.g. a CLI event-schema
-# change) would hard-block every call until a human intervenes or flips this —
-# loud and safe, but it can wedge a run. Either way the sandbox and permission
-# rules still apply; this hook is not the boundary.
+#
+# Default False, deliberately, and it is the one place this file does NOT follow
+# the harness's fail-closed posture. preflight.py fails closed because it guards
+# the *boundary*: without a sandbox there is no protection left. This hook is
+# explicitly not the boundary — when it cannot parse an event, the sandbox and
+# every permission rule are still in force, so blocking buys almost nothing.
+# What it costs is real: a CLI event-schema change would hard-block every shell
+# call until a human finds this constant, and this repo has already been in a
+# state where nothing could run (README, *Known issues*). Loud degradation beats
+# a second way to wedge a session.
+#
+# Set it to True if this hook is your last line — e.g. you run without the
+# sandbox because isolation is external and unverifiable from here.
+#
 # NOTE: this governs "can't judge the call", not "can't write my bookkeeping
 # file". Counter IO errors (e.g. a read-only fs) always fail OPEN, because the
 # command itself may be perfectly safe — see check_budget.
-FAIL_CLOSED_ON_ERROR = True
+FAIL_CLOSED_ON_ERROR = False
 
-# Deny only catastrophic targets. `rm -rf node_modules` is handled by the
-# `Bash(rm -rf:*)` *ask* rule in settings.json: a guard that blocks everyday
-# work gets switched off, and then it protects nothing.
+# Deny only catastrophic targets: irreversible, or a boundary crossing. Anything
+# that is merely *unwise* belongs in ASK_PATTERNS below — `rm -rf node_modules`
+# is handled by the `Bash(rm -rf:*)` ask rule in settings.json. A guard that
+# blocks everyday work gets switched off, and then it protects nothing.
 ACCIDENT_PATTERNS = [
     r"\brm\s+-\S*[rf]\S*\s+\*",                 # rm -rf *
     r"\brm\b[^;&|]*\s(/|~|\$HOME)/?(\s|$)",     # rm whose target is / ~ $HOME
     r"git\s+push\b.*--force(-with-lease)?\b.*\b(main|master)\b",
-    r"--no-verify",                             # skipping hooks / CI checks
-    r"\bchmod\s+777\b",
-    r"\b(DROP|TRUNCATE)\s+(TABLE|DATABASE)\b",
     r"\bmkfs\b|\bdd\s+if=.*of=/dev/",
     r"curl\b[^|]*\|\s*(ba)?sh",                 # curl | sh
     r">\s*\.env",                               # clobbering secrets
+]
+
+# Second tier: prompt the human instead of blocking. These are judgment calls,
+# not accidents — a maintainer may legitimately mean every one of them, and a
+# hard block on a legitimate action is how a guard earns ACCIDENT_CATCHER=False.
+#
+# `--no-verify` sat in the deny list next to `mkfs`, which was a category error:
+# skipping a pre-commit hook is a policy preference, and the bare string also
+# matches commands that have nothing to do with git. Neither it nor a flag like
+# it can be written as a permission rule, because rules match command prefixes,
+# not arguments — which is precisely why this tier lives in the hook.
+#
+# Degradation: the ask verdict is exit 0 + structured stdout JSON, which Claude
+# Code honours. A tool that ignores it lets the call proceed under the normal
+# permission flow — the sandbox and the deny rules still apply. That is the
+# right failure direction for a tier that is advisory by design.
+ASK_PATTERNS = [
+    (r"--no-verify", "skips pre-commit/CI checks"),
+    (r"\bchmod\s+777\b", "world-writable permissions"),
+    (r"\b(DROP|TRUNCATE)\s+(TABLE|DATABASE)\b", "destroys data irreversibly"),
+    (r"\bgit\s+reset\s+--hard\b.*\borigin/", "discards local commits"),
 ]
 
 # Close the excludedCommands chaining hole. `sandbox.excludedCommands` is a
@@ -163,7 +202,7 @@ def extract_command(event: dict) -> str:
     """The shell command, wherever the tool puts it.
 
     Claude Code / Codex: {"tool_name": "Bash", "tool_input": {"command": ...}}.
-    Cursor beforeShellExecution: {"command": ..., "cwd": ..., "sandbox": ...}.
+    The other common shape: a top-level {"command": ...} with no tool_name.
     A non-shell event (a file write, an MCP call) has no command here -> "".
     """
     tool_input = event.get("tool_input") or {}
@@ -177,6 +216,22 @@ def block(reason: str) -> None:
 
 def allow_silently() -> None:
     sys.exit(0)  # no decision -> normal permission flow
+
+
+def ask(reason: str) -> None:
+    """Hand the decision to the human: exit 0 + structured JSON on stdout.
+
+    Never mixed with exit 2 — a non-zero exit discards the JSON. A tool that
+    does not read this shape simply proceeds; see ASK_PATTERNS.
+    """
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "ask",
+            "permissionDecisionReason": f".claude/hooks/guard.py: {reason}",
+        }
+    }))
+    sys.exit(0)
 
 
 def fail(reason: str) -> None:
@@ -292,7 +347,7 @@ def _atomic_write_json(path: Path, data: dict) -> None:
 
 
 def check_budget(session_id: str) -> None:
-    if MAX_TOOL_CALLS_PER_SESSION <= 0 or not session_id:
+    if MAX_SHELL_CALLS_PER_SESSION <= 0 or not session_id:
         return
     counter = STATE_DIR / "tool_calls.json"
     n = 0
@@ -312,16 +367,17 @@ def check_budget(session_id: str) -> None:
     except OSError:
         return  # read-only fs / bookkeeping IO error -> never block on bookkeeping
 
-    if n > MAX_TOOL_CALLS_PER_SESSION:
+    if n > MAX_SHELL_CALLS_PER_SESSION:
         block(
-            f"tool-call budget exhausted ({n} > {MAX_TOOL_CALLS_PER_SESSION} this "
-            "session). Stop and report progress to the human instead of continuing."
+            f"shell-call budget exhausted ({n} > {MAX_SHELL_CALLS_PER_SESSION} this "
+            "session). Stop and report progress to the human instead of continuing. "
+            "Non-shell tools are unaffected, so write .agent/PROGRESS.md first."
         )
 
 
 def check_accidents(cmd: str) -> None:
     # Runs whenever there is a command to inspect. Tool name is unreliable across
-    # tools (Cursor's shell hook sends none), but only shell execs carry a
+    # tools (some shell hooks send none), but only shell execs carry a
     # command, so a non-empty `cmd` is the signal — file writes and MCP calls
     # land here with cmd == "" and fall through untouched.
     if not ACCIDENT_CATCHER or not cmd:
@@ -332,6 +388,15 @@ def check_accidents(cmd: str) -> None:
                 f"command matches a denied pattern ({pattern}): {cmd[:130]}. "
                 "This is an accident catcher, not a boundary — if you meant it, ask."
             )
+
+
+def check_ask_patterns(cmd: str) -> None:
+    """Second tier: prompt rather than block. Runs after every deny check."""
+    if not ACCIDENT_CATCHER or not cmd:
+        return
+    for pattern, why in ASK_PATTERNS:
+        if re.search(pattern, cmd, re.IGNORECASE):
+            ask(f"{why} ({pattern}). Confirm you meant it: {cmd[:130]}")
 
 
 def check_excluded_chaining(cmd: str) -> None:
@@ -371,6 +436,7 @@ def main() -> None:
     cmd = extract_command(event)
     check_accidents(cmd)
     check_excluded_chaining(cmd)
+    check_ask_patterns(cmd)  # last: a deny from either check above wins
     allow_silently()
 
 

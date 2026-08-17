@@ -52,7 +52,7 @@ tripped, e.g. "auth + schema migration + API change → graph, 3 risk domains."
 
 Don't attach a confidence score to this. The decision matrix is a boolean
 check on things you can point at in the diff (file count, does it touch
-`api/openapi.yaml`, does it touch auth) — there's nothing probabilistic to
+`example/api/openapi.yaml`, does it touch auth) — there's nothing probabilistic to
 report, and a fabricated-looking number like `0.93` is worse than no number:
 it invites trusting a judgment that was never made. If the call is genuinely
 unclear, say so in prose and default to the plain pipeline.

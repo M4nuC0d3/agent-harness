@@ -21,17 +21,17 @@ they'd touch the same files. Cap parallelism at what you can review, ~2-3.
   allowlist exception — which is why WebFetch is gated with `ask`, not a
   deny-all (README, *Known issue: WebFetch*).
 - Sandbox: Seatbelt on macOS, `bubblewrap` + `socat` on Linux/WSL2, **absent on
-  WSL1 and native Windows**. `/sandbox` lists missing dependencies.
+  WSL1 and native Windows**; `/sandbox` lists what is missing. `preflight.py` also
+  stops when no sandbox is *configured* — a plugin install with no settings.json.
 - `managed-settings.example.json`, deployed to the system path, makes a `deny`
-  unoverridable org-wide.
+  unoverridable org-wide — and must force-enable this plugin, or its hooks stop.
 
 **Model steering:** the `model:` field per sub-agent (`opus` | `sonnet` |
 `haiku` | full id | `inherit`) — read-only research cheap, implementation
 balanced, the evaluator's judgment strongest. `CLAUDE_CODE_SUBAGENT_MODEL`
 overrides all at once. Restart the session after editing an agent file on disk.
 
-**Skills** (`.claude/skills/`) load only when their description matches, so they
-cost nothing until used. A workflow you would explain twice belongs there, not
-in this file or `AGENTS.md` — that is what keeps the always-loaded context lean.
+**Skills** (`.claude/skills/`) load only on a description match, so they cost
+nothing until used. A workflow you would explain twice belongs there, not here.
 
 For unattended runs use the **Claude Agent SDK**, not a hand-written orchestrator.

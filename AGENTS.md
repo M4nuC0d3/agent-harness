@@ -1,9 +1,9 @@
 # AGENTS.md
 
 Instructions for AI coding agents in this repo. **This file is the only copy** —
-`CLAUDE.md` and `GEMINI.md` import it. The main session is a **coordinator**: it
-plans, delegates to three roles, verifies, and integrates. It does not do the
-work itself.
+Codex reads it directly and `CLAUDE.md` imports it; any other agent that reads
+`AGENTS.md` gets the same instructions. The main session is a **coordinator**: it
+plans, delegates to three roles, verifies, integrates — it does not do the work.
 
 ## Hard rules
 
@@ -138,25 +138,25 @@ Do **not**:
 - **Commit `.env`, keys, or anything under `secrets/`.** They are denied at two
   layers; do not route around them.
 
-## Project facts
-
-A **monorepo**: a Quarkus/Java backend and an Angular frontend that share one API
-contract.
+<!-- HARNESS:PROJECT-START · everything down to PROJECT-END is the demo project;
+     replace it — skeleton templates/PROJECT.block.md, walkthrough docs/adopt.md.
+     Inline on purpose: Codex resolves no @import, it would be dead text there. -->
+## Project facts — EXAMPLE, replace with your own
 
 ```
-api/         OpenAPI contract — the single source of truth (contract-first)
-backend/     Quarkus · Java 25 · Maven · DDD     → backend/AGENTS.md
-frontend/    Angular                             → frontend/AGENTS.md
+example/api/       OpenAPI contract — the source of truth (contract-first)
+example/backend/   Quarkus · Java 25 · Maven · DDD → example/backend/AGENTS.md
+example/frontend/  Angular                        → example/frontend/AGENTS.md
 ```
 
-Build/test commands and per-stack conventions live in those package files — the
-**closest `AGENTS.md` wins**, so this root stays global. Three rules hold repo-wide:
+Two stacks, one contract. Per-stack commands live in the nested files — the
+**closest `AGENTS.md` wins**, so this root stays global. Three rules hold here:
 
-- **Contract-first.** `api/openapi.yaml` is the interface. Change it *first*,
-  then regenerate both sides — never hand-edit generated types.
-- **The loop opens PRs, it never merges.** Feature branch → push → `gh pr create`.
-  Never push to `main`, never `gh pr merge` (denied). On CI failure, fix and push
-  to the **same** branch. Never force-push a branch with an open PR unless a
-  human asks for a rebase.
+- **Contract-first.** `example/api/openapi.yaml` is the interface. Change it
+  *first*, then regenerate both sides — never hand-edit generated types.
+- **The loop opens PRs, it never merges.** Branch → push → `gh pr create`. Never
+  push to `main`, never `gh pr merge` (denied); on CI failure fix and push to the
+  **same** branch, and never force-push a branch with an open PR.
 - **Done = the whole suite green** — Spock + `@QuarkusTest` + ArchUnit, not a
-  subset. Levels and conventions: the `quarkus-testing` skill.
+  subset. Conventions: the `quarkus-testing` skill under `example/skills/`.
+<!-- HARNESS:PROJECT-END -->

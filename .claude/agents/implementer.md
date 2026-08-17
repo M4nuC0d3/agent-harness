@@ -9,7 +9,7 @@ reviewer feedback from a previous attempt).
 
 When invoked:
 1. Read only the files relevant to this subtask — plus, before writing code in a
-   package, the nearest `AGENTS.md` (e.g. `backend/AGENTS.md`) and any
+   package, the nearest `AGENTS.md` (the closest one wins) and any
    `.claude/skills/*/SKILL.md` that matches what you are about to do. Skills load
    on description match, which is probabilistic; reading the file is not.
 2. Make the smallest change that fully satisfies the subtask's definition of done.

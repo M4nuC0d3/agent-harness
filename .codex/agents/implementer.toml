@@ -19,7 +19,7 @@ previous attempt.
 When invoked:
 1. Read only the files relevant to this subtask.
    Before writing code in a package, also read the nearest AGENTS.md
-   (for example `backend/AGENTS.md`) and any `.claude/skills/*/SKILL.md`
+   (the closest one wins) and any `SKILL.md` on the project's skill path
    matching what you are about to do. These are plain files — read them
    directly rather than relying on any skill-loading mechanism.
 2. Make the smallest change that fully satisfies the subtask's definition of

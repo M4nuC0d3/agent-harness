@@ -42,6 +42,13 @@ STATE_DIR = Path(".agent")
 TRACE = STATE_DIR / "trace.jsonl"
 MAX_SUMMARY = 200
 
+# The trace is append-only and nothing ever pruned it: on a long-running project
+# it grows without bound, and the file that is supposed to make a session
+# reviewable becomes the one nobody opens. Roll it over instead — one previous
+# generation is kept as trace.jsonl.1 and the older one is dropped. Set to 0 to
+# disable rotation and keep the original unbounded behaviour.
+MAX_TRACE_BYTES = 5 * 1024 * 1024
+
 # Bump when a field changes meaning — not when one is added. Readers that
 # filter on a known schema keep working; readers that ignore it also keep
 # working, which is why additions do not bump.
@@ -95,7 +102,7 @@ def summarize(event: dict) -> str:
     """One short, greppable line — never the full payload.
 
     Reads the command from either shape: `tool_input.command` (Claude Code,
-    Codex) or top-level `command` (Cursor afterShellExecution).
+    Codex) or a top-level `command`.
     """
     tool_input = event.get("tool_input")
     if not isinstance(tool_input, dict):
@@ -111,13 +118,32 @@ def summarize(event: dict) -> str:
     return ""
 
 
+def _rotate_if_large() -> None:
+    """Roll trace.jsonl over to trace.jsonl.1 once it passes MAX_TRACE_BYTES.
+
+    os.replace is atomic, so a concurrent reader sees either generation whole,
+    never a truncated file. Every failure is swallowed: losing a rotation is a
+    housekeeping problem, breaking a session is not. Rotation is checked before
+    the append rather than after, so the cap is a floor — a line may push the
+    file slightly past it, which is cheaper than stat-ing twice.
+    """
+    if MAX_TRACE_BYTES <= 0:
+        return
+    try:
+        if TRACE.stat().st_size < MAX_TRACE_BYTES:
+            return
+        os.replace(str(TRACE), str(TRACE) + ".1")
+    except OSError:
+        pass
+
+
 def main() -> None:
     try:
         event = json.load(sys.stdin)
     except Exception:
         sys.exit(0)  # never break the session on a malformed payload
 
-    # Cursor's shell hook sends no tool_name but does send a top-level command.
+    # Some shell hooks send no tool_name but do send a top-level command.
     tool_input = event.get("tool_input")
     if not isinstance(tool_input, dict):
         tool_input = {}
@@ -139,6 +165,7 @@ def main() -> None:
 
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
+        _rotate_if_large()
         with TRACE.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
     except OSError:

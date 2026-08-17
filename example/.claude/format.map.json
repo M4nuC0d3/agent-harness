@@ -1,0 +1,28 @@
+{
+  "$comment": [
+    "REFERENCE COPY — the demo's map, part of example/, not of the harness.",
+    "Nothing reads this file. format.py reads $CLAUDE_PROJECT_DIR/.claude/format.map.json,",
+    "so the live map is one you write in your own project; a missing map",
+    "disables auto-formatting silently, exactly like a missing formatter.",
+    "This copy exists to show the shape: format.py walks rules in order and runs",
+    "the first one whose prefix and extension match the file just written.",
+    "prefix matches the path relative to the PROJECT ROOT, anchored at its start:",
+    "'frontend/' is frontend/ at the top level, never vendor/legacy/frontend/.",
+    "'' matches every file in the project, and never one outside it.",
+    "requires is a binary that must be on PATH, or the rule is skipped."
+  ],
+  "rules": [
+    {
+      "prefix": "example/frontend/",
+      "extensions": [".ts", ".html", ".scss", ".css", ".js", ".mjs", ".json"],
+      "command": ["npx", "--no-install", "prettier", "--write", "{file}"],
+      "requires": "npx"
+    },
+    {
+      "prefix": "example/backend/",
+      "extensions": [".java"],
+      "command": ["google-java-format", "-i", "{file}"],
+      "requires": "google-java-format"
+    }
+  ]
+}

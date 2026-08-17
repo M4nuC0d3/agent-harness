@@ -1,10 +1,46 @@
 {
-  "_comment": "Org-level lockdown. Deploy to the managed-settings path for your OS (a system path requiring admin rights) \u2014 it is NOT read from a repo. A deny here cannot be overridden by any lower scope.",
-  "permissions": {
-    "disableBypassPermissionsMode": "disable"
-  },
-  "allowManagedPermissionRulesOnly": true,
+  "_comment": "Org-level lockdown TEMPLATE. Deploy to the managed-settings path for your OS (a system path requiring admin rights) — it is NOT read from a repo. A deny here cannot be overridden by any lower scope. READ _lockdown_note BEFORE deploying: the two allowManaged* flags below switch OFF every project-supplied hook and permission rule, so this file must carry replacements for both or the harness's enforcement disappears.",
+  "_lockdown_note": "allowManagedHooksOnly blocks user hooks, project hooks and plugin hooks — EXCEPT hooks from plugins force-enabled in managed enabledPlugins, matched by the full plugin@marketplace id. That is why enabledPlugins below is not optional: without it, guard.py, preflight.py and trace.py stop running, and preflight (being a hook itself) cannot warn you. allowManagedPermissionRulesOnly likewise makes project permission rules inert, so the deny/ask baseline is repeated here rather than inherited.",
   "allowManagedHooksOnly": true,
+  "allowManagedPermissionRulesOnly": true,
+  "extraKnownMarketplaces": {
+    "m4nuc0d3-harness": {
+      "source": {
+        "source": "github",
+        "repo": "M4nuC0d3/agent-harness"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "agent-harness@m4nuc0d3-harness": true
+  },
+  "permissions": {
+    "disableBypassPermissionsMode": "disable",
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(**/*credentials*)",
+      "Edit(./.env)",
+      "Edit(./.env.*)",
+      "Edit(./secrets/**)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(sudo:*)",
+      "Bash(gh pr merge:*)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(rm -rf:*)",
+      "Bash(terraform:*)",
+      "Bash(kubectl:*)",
+      "Bash(npm publish:*)",
+      "WebFetch"
+    ]
+  },
   "sandbox": {
     "enabled": true,
     "allowUnsandboxedCommands": false

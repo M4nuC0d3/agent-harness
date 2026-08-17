@@ -1,4 +1,5 @@
 {
+  "description": "Harness hooks for Codex. One file for both install routes: ${PLUGIN_ROOT} is set only when Codex loads this from a plugin install, and the git root is the fallback for a project that copied .codex/ in. Codex expands the command string, so the same entry resolves in both \u2014 which is why this file no longer has a twin under .codex-plugin/ to drift away from it.",
   "hooks": {
     "SessionStart": [
       {
@@ -6,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/preflight.py\"",
+            "command": "/usr/bin/env python3 \"${PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/.claude/hooks/preflight.py\"",
             "timeout": 20,
             "statusMessage": "Checking sandbox prerequisites"
           }
@@ -19,7 +20,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/guard.py\"",
+            "command": "/usr/bin/env python3 \"${PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/.claude/hooks/guard.py\"",
             "timeout": 15,
             "statusMessage": "Checking command against policy"
           }
@@ -32,9 +33,20 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/trace.py\"",
+            "command": "/usr/bin/env python3 \"${PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/.claude/hooks/trace.py\"",
             "timeout": 15,
             "statusMessage": "Recording audit trace"
+          }
+        ]
+      },
+      {
+        "matcher": "apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env python3 \"${PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/.claude/hooks/format.py\"",
+            "timeout": 60,
+            "statusMessage": "Formatting what was written"
           }
         ]
       }

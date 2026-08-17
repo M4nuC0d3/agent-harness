@@ -1,4 +1,4 @@
-# frontend/AGENTS.md
+# example/frontend/AGENTS.md
 
 Angular application, built with the Angular CLI. Package manager: **npm**. Use
 the Node version the repo pins — check `.nvmrc` / `package.json` `engines` before
@@ -47,5 +47,5 @@ Write new code to these; don't reintroduce older patterns:
 The typed HTTP client is **generated** from `../api/openapi.yaml` (e.g.
 `ng-openapi-gen` or openapi-generator `typescript-angular`). Do **not** hand-write
 or hand-edit the client, and do **not** call endpoints the contract doesn't
-define. Need a new endpoint? Change `api/openapi.yaml` first, regenerate, then
+define. Need a new endpoint? Change `../api/openapi.yaml` first, regenerate, then
 use it. Keep the generated client in its own folder and treat it as read-only.

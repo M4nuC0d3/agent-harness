@@ -11,7 +11,12 @@
       "source": "./",
       "description": "Coordinator + researcher/implementer/evaluator, a session budget, an accident catcher that closes the excludedCommands chaining hole, and an audit trace.",
       "category": "workflow",
-      "tags": ["agents", "subagents", "enforcement", "quarkus", "angular"]
+      "tags": [
+        "agents",
+        "subagents",
+        "enforcement",
+        "template"
+      ]
     }
   ]
 }

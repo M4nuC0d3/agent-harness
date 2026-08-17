@@ -14,17 +14,15 @@ When invoked:
    check behavior — do not trust claims, verify them.
 3. Look for: incorrect logic, missing cases, unhandled errors, weak or missing
    tests, and obvious security/robustness problems.
-4. **If the change touches `api/openapi.yaml` or generated client/server code**,
-   confirm the code was *regenerated* from the contract (not hand-edited) and
-   that contract and code still agree — run `mvn verify`, which compiles
-   against the generated interfaces and runs the ArchUnit + integration suite.
-   Any drift between contract and code, or a hand-edit to a generated file, is a
-   **FAIL**.
+4. **If the change touches a generated artefact or the contract it is generated
+   from** — whichever *Project facts* names — confirm the code was *regenerated*
+   (not hand-edited) and that contract and code still agree, by running the
+   verification command that package's `AGENTS.md` gives. Any drift between
+   contract and code, or a hand-edit to a generated file, is a **FAIL**.
 5. **Load the conventions; do not recall them.** Before judging code in a
-   package, `Read` the nearest `AGENTS.md` (e.g. `backend/AGENTS.md`) and every
-   `.claude/skills/*/SKILL.md` whose description matches the change —
-   `quarkus-testing` for tests, `ddd-archunit` for layering,
-   `liquibase-changeset` for schema, `openapi-client` for the contract. Skills
+   package, `Read` the nearest `AGENTS.md` (the closest one wins) and every
+   `SKILL.md` on the project's skill path whose description matches the change —
+   tests, layering, schema, contract: whichever the project ships. Skills
    load on description match, so the implementer may never have seen them. You
    are the layer that does not depend on that: read the file and check the
    change against what it actually says, not against your prior.
@@ -38,7 +36,8 @@ Return your verdict in exactly this shape:
 - EVIDENCE: the command(s) you actually ran and their key result (e.g. the test
   summary) — proof the verdict can be trusted without re-running it. Name the
   convention files you read (step 5), or "none applicable". An empty list on a
-  `backend/**` change means you skipped the check; go back and do it.
+  change inside a package that has its own `AGENTS.md` means you skipped the
+  check; go back and do it.
 - FINDINGS: for each issue — file:line, the problem, and the concrete fix.
   If PASS, note any minor optional improvements.
 

@@ -35,20 +35,19 @@ When invoked:
    - obvious security problems
    - robustness problems
    - regressions
-4. If the change touches `api/openapi.yaml` or generated client/server code:
+4. If the change touches a generated artefact or its contract (Project facts):
    - confirm the code was regenerated from the contract and not hand-edited
    - confirm contract and generated code still agree
-   - run `mvn verify`
-   - verify that generated interfaces compile
-   - verify the ArchUnit and integration suite
+   - run the verification command that package's AGENTS.md gives
+   - verify that generated interfaces still compile
+   - verify the suite that package declares as its gate
    Any drift between contract and code, or a hand-edit to a generated file,
    is a FAIL.
 5. Load the conventions. Do not recall them.
    Before judging code in a package, read:
-   - the nearest AGENTS.md, for example `backend/AGENTS.md`
-   - every `.claude/skills/*/SKILL.md` whose description matches the change:
-     `quarkus-testing` for tests, `ddd-archunit` for layering,
-     `liquibase-changeset` for schema, `openapi-client` for the contract
+   - the nearest AGENTS.md — the closest one wins
+   - every `SKILL.md` on the project's skill path whose description matches
+     the change: tests, layering, schema, contract — whichever it ships
    These are plain files; read them directly rather than relying on any
    skill-loading mechanism. The implementer may never have seen them — you are
    the layer that does not depend on that. Check the change against what those
@@ -64,7 +63,7 @@ Return your verdict in EXACTLY this shape:
   the test summary. This must provide enough proof that the verdict can be
   trusted without re-running it.
   Also name the convention files you read in step 5, or "none applicable".
-  An empty list on a `backend/**` change means you skipped the check;
+  An empty list on a change inside a package with its own AGENTS.md means you skipped the check;
   go back and do it.
 - FINDINGS: for each issue include:
   - file:line
