@@ -17,9 +17,9 @@ Read these first; they are the ones that matter when context gets long.
    failure is the boundary working, so report it and ask. The guarantee needs a
    real OS sandbox (on Windows, WSL2 — README *Prerequisites*); if you cannot
    confirm one is active, say so.
-2. **Permission rules.** Reads and writes of secrets are denied. `curl`, `wget`
-   and `sudo` are denied — fetch through the allowlisted `WebFetch` domains.
-   `git push`, `rm -rf`, `terraform` and `kubectl` prompt the human.
+2. **Permission rules.** Reads/writes of secrets and edits to `.claude/**` are
+   denied. `curl`, `wget`, `sudo` denied — fetch via allowlisted `WebFetch`.
+   `git push`, `rm -rf`, `terraform`, `kubectl` prompt the human.
 3. **Hook.** A per-session tool-call ceiling (no permission rule can count), and
    an audit trace of every call to `.agent/trace.jsonl`.
 

@@ -164,11 +164,13 @@ metadata in one directory. `test_docs.py` asserts they stay different.
 > enabled state in `~/.codex/config.toml`, user-level, where no test in this
 > repo can see it. `/plugins` shows you what is installed.
 
-One behavioural difference: `guard.py`'s chaining check reads its prefixes from
-the project's `.claude/settings.json`, which a Codex-only project doesn't have —
-so it reads none and skips itself, by design. It closes a hole specific to Claude
-Code's `excludedCommands`, which Codex has no equivalent of. Budget, accident
-catcher and trace still run.
+One behavioural difference: `preflight.py` refuses to start any Claude Code
+session whose `.claude/settings.json` carries a non-empty
+`sandbox.excludedCommands` — this harness does not support that escape hatch at
+all (*Known issue: `excludedCommands` matches the whole shell line*, below).
+That check only fires when it can identify the tool as Claude Code, so a
+Codex-only project never hits it — Codex has no `excludedCommands` equivalent
+to refuse. Budget, accident catcher and trace still run.
 
 Bump `version` in **both** `.claude-plugin/plugin.json` and
 `.codex-plugin/plugin.json` on every release; without a bump, installed copies
@@ -421,11 +423,12 @@ variables expanded, wrappers used. That is why the guard's denylist is labelled
 an *accident catcher* (`ACCIDENT_CATCHER = False` disables it) and why `curl` is
 denied outright rather than pattern-matched.
 
-The hook exists for the three things rules cannot do: count tool calls per
-session, write an audit trace, and refuse a sandbox-excluded command that
-carries other commands with it (*Known issue: `excludedCommands`*). That last
-one is enforceable — unlike the accident catcher — precisely because it matches
-on *shape* (is anything chained?) rather than on intent (is this dangerous?).
+The hooks exist for what rules cannot do: `guard.py` counts shell calls and
+delegations per session and runs an opt-in accident catcher; `trace.py` writes
+an audit trace; `preflight.py` refuses to even start a session whose
+`sandbox.excludedCommands` is non-empty (*Known issue: `excludedCommands`*),
+because that key skips the sandbox for a command's whole shell line, chaining
+included, and no permission rule can see inside a shell line at all.
 
 Test all three without a model in the loop:
 
@@ -557,7 +560,7 @@ field for.
 | Codex: "seccomp/landlock … not supported in this environment" | You're on WSL1 (or an old kernel) — Codex detects it as Linux but the primitives aren't there. Move to WSL2. |
 | Heredocs (`<< EOF`) fail | A known sandbox limitation: the shell needs a temp file. Write the file, then run it. |
 | The guard blocks something legitimate | Move it out of `ACCIDENT_PATTERNS` and add a `Bash(...)` **ask** rule in `.claude/settings.json`. Don't disable the sandbox. |
-| Every Bash command fails with `apply-seccomp: write /proc/self/uid_map: Operation not permitted` | `bwrap` itself can't start — see *Known issue: bwrap can't create its user namespace* below. Only commands listed in `sandbox.excludedCommands` in `.claude/settings.json` (currently `docker *`, `mvn *`, `npm *`, `find *`, `ls *`, `grep *`), which skip the sandbox wrapper entirely, still run; everything else — including `echo` and `git` — is blocked at the boundary, not by a permission rule. **Don't "fix" this by adding more entries to `excludedCommands`** — see *Known issue: `excludedCommands` matches the whole shell line* below before touching that list. |
+| Every Bash command fails with `apply-seccomp: write /proc/self/uid_map: Operation not permitted` | `bwrap` itself can't start — see *Known issue: bwrap can't create its user namespace* below, **including the workaround that resolved it on this environment** (`sandbox.network.allowAllUnixSockets: true`). Every Bash call is blocked at the boundary until you've applied it or confirmed it doesn't apply to your machine — this harness does not support `sandbox.excludedCommands` as a fallback (*Known issue: `excludedCommands` matches the whole shell line* below); `preflight.py` refuses to start a session where that key is configured at all. |
 | Context feels bloated | `AGENTS.md` is 163 lines; with `CLAUDE.md` Claude Code sees 200 — exactly at Anthropic's ~200 guideline, so the next rule you add has to replace one. Re-measure with `cat CLAUDE.md AGENTS.md \| wc -l` after editing either; the number above goes stale silently. Stack detail lives in the nested per-package `AGENTS.md` (loaded only in-tree — and see *Where project information lives* for what Codex does with those), and repeated workflows belong in `.claude/skills/` (see *Recommendations*), not here. `@path` imports do **not** reduce context — they load at launch. |
 
 ## Known gaps
@@ -623,11 +626,15 @@ Root cause of the network-proxy restriction above, for whoever picks this up:
    `repo1.maven.org`, `pypi.org`, `github.com`. Persists across a full session
    restart (fresh proxy auth token each time — rules out staleness).
 2. `sandbox.excludedCommands` does not exempt commands from network namespace
-   isolation on Linux/WSL2. `ip addr` inside an "excluded" `npm install` shows
-   only the loopback interface — the process never leaves the bubblewrap
-   container. Removing the sandbox proxy env vars for such a command causes
-   immediate `EAI_AGAIN`, since the private network namespace has no route out
-   except the (separately broken) allowlist proxy.
+   isolation on Linux/WSL2 either — `ip addr` inside an "excluded"
+   `npm install` shows only the loopback interface, the process never leaves
+   the bubblewrap container. Removing the sandbox proxy env vars for such a
+   command causes immediate `EAI_AGAIN`, since the private network namespace
+   has no route out except the (separately broken) allowlist proxy. This is
+   part of why `excludedCommands` is not a viable workaround at all — see
+   *Known issue: `excludedCommands` matches the whole shell line*, below,
+   which is a second, worse reason and the one that led this harness to
+   refuse the key outright.
 
 Environment: Claude Code 2.1.210, WSL2 (bubblewrap + socat, Unix-domain-socket
 bridge to an outer-namespace TCP proxy). Possible upstream bug:
@@ -638,11 +645,10 @@ yet been verified on other platforms (native Linux, macOS/Seatbelt) or with
 other AI coding tools (Codex), so treat it as scoped to that combo
 until someone confirms otherwise.
 
-Workaround: Sandbox exclude Docker, Maven and NPM
-"excludedCommands": ["docker *", "mvn *", "npm *"]
-
-(This list has since grown for an unrelated reason — see the next section and
-the current `excludedCommands` value in `.claude/settings.json`.)
+No `excludedCommands` workaround is offered here — see the two known issues
+below for why this harness refuses that key rather than proposing it. If you
+hit this, trim `sandbox.network.allowedDomains` and escalate the proxy
+behaviour upstream (`#30112`) rather than routing traffic around the sandbox.
 
 #### Known issue: a `WebFetch` deny-all cannot be narrowed by an allowlist
 
@@ -676,21 +682,54 @@ Symptom: **every** Bash call — including a bare `echo` — fails immediately w
 apply-seccomp: write /proc/self/uid_map: Operation not permitted
 ```
 
-before any command output. `mvn`, `npm`, `docker`, `find`, `ls` and `grep` still
-work, because `sandbox.excludedCommands` in `.claude/settings.json` (see the
-workaround above — since extended to also cover the three read-only commands)
-makes them skip the `bwrap` wrapper entirely — everything else (`echo`, `git`,
-`cat`, `node`, …) goes through it and dies at namespace setup, so this is a
-sandbox-boundary failure, not a permission denial and not something a retry or
-a different command form fixes (and `allowUnsandboxedCommands: false` means
-there is no fallback path anyway).
+before any command output — a sandbox-boundary failure, not a permission
+denial, and not something a retry or a different command form fixes (and
+`allowUnsandboxedCommands: false` means there is no fallback path anyway).
 
-Read-only file exploration (`find`/`ls`/`grep`) is a pragmatic, low-risk
-addition to the exclusion list to keep working while the underlying `bwrap`
-issue is unresolved — but it's still a widening of what bypasses the sandbox,
-so don't casually add more commands here. Anything that writes or reaches the
-network stays firmly inside the broken boundary until this is fixed. In
-particular, **do not add `git *`** — see the next known issue for why.
+**Workaround found, and verified on this environment:** set
+`sandbox.network.allowAllUnixSockets: true` (`.claude/settings.json` and
+`settings.consumer.example.json`, `sandbox.network`). With that flag flipped,
+`bwrap` builds the namespace cleanly and every sandboxed command — `echo`,
+`git`, `cat`, `node`, all of it — runs normally again; `sandbox.excludedCommands`
+carries no entries any more because nothing needs to skip the sandbox. Verified
+with the exact repro from the next section (`git rev-parse --show-toplevel`,
+`whoami`, `id -u`) and with a fresh `bwrap --unshare-all --ro-bind / / --dev
+/dev true` from inside a live sandboxed Bash call.
+
+Root cause is still not nailed down — this is a correlation, not a proven
+mechanism — but the shape fits: the *Known issue: sandbox network proxy* above
+describes Claude Code's own egress path as a Unix-domain-socket bridge to an
+outer-namespace TCP proxy, and `allowUnixSockets` (below, narrowed to
+`/var/run/docker.sock`) restricted exactly that class of socket before this
+change. A plausible read is that the sandbox wrapper's own setup — not the
+sandboxed command — needs to open a Unix socket for that bridge as part of
+building the namespace, and a restrictive `allowUnixSockets` policy was
+blocking *that*, surfacing confusingly as a `uid_map` permission error instead
+of a socket error. Not confirmed against a live upstream source.
+
+**This is a real widening, not a free fix.** `allowAllUnixSockets: true` means
+sandboxed Bash can connect to *any* Unix domain socket reachable from the
+sandbox's mount namespace, not only `docker.sock` — e.g. an SSH agent socket,
+an X11/Wayland socket, or anything else a host process exposes that way.
+`allowUnixSockets` still lists `docker.sock` explicitly so the narrow policy
+survives if this is ever tightened again (`test_policy.py` asserts both:
+that the widening is deliberate, and that the narrow list isn't lost under it).
+If your environment doesn't need the workaround — `bwrap` already builds the
+namespace fine — leave `allowAllUnixSockets: false` and skip this.
+
+The rest of this section is the diagnosis as it stood before the workaround
+was found, kept for whoever hits a variant of this that the flag above doesn't
+fix:
+
+`mvn`, `npm`, `docker`, `find`, `ls` and `grep` used to be listed in
+`sandbox.excludedCommands` in `.claude/settings.json`, which made them skip the
+`bwrap` wrapper entirely while everything else — `echo`, `git`, `cat`, `node`,
+… — went through it and died at namespace setup. That exclusion list is gone
+now that the underlying failure has a fix, and it is not coming back as a
+fallback: the next section is why. If you're still blocked after trying
+`allowAllUnixSockets: true`, that is a genuine blocker to fix on the machine or
+escalate — not something to route around by excluding a command from the
+sandbox.
 
 #### Known issue: `excludedCommands` matches the whole shell line, not just the excluded command
 
@@ -718,23 +757,28 @@ allowlist, no `~/.ssh`/`~/.aws` deny. This is the same class of gap
 denylist ("Bash patterns are not a security control") — it turns out to apply
 to `excludedCommands` too.
 
-**Resolution (two parts).** First, `.claude/hooks/guard.py` now blocks any
-command line that *starts with* an excluded prefix **and** contains a chain or
-substitution operator (`;`, `&&`, `||`, `|`, `$(`, backtick, newline). Chaining
-is the entire exploit, so refusing the chained form closes it without giving up
-the exclusions that keep Maven, npm and Docker working while `bwrap` is broken.
-The prefixes are read from `settings.json`, so the two cannot drift, and
-`test_guard.py` covers the cases — including that a *non*-excluded command
-chains freely, since both halves stay sandboxed and there is nothing to protect.
+**Resolution: the key is refused outright, not mitigated.** An earlier version
+of this harness carried a two-part mitigation here — `guard.py` blocking any
+excluded-prefix command line that also contained a chain or substitution
+operator, plus keeping the excluded list itself as short as possible (`git *`
+was removed again after this was found; `find`/`ls`/`grep`/`mvn`/`npm`/`docker`
+stayed, on the reasoning that they're read-only or need registry/daemon access
+anyway). That mitigation is gone. The chaining gap is not the only way an
+excluded command escapes every other control (see the network-namespace finding
+in the *sandbox network proxy* known issue above), and a prefix match that has
+to be re-audited every time a new command joins the list is exactly the
+"Bash patterns are not a security control" trap *Instructions vs. enforcement*
+warns about — mitigating the shape it fails in is weaker than refusing the
+configuration that creates the failure mode at all.
 
-Second, `"git *"` was removed from `excludedCommands` again
-(confirmed `git status` goes back to failing at the sandbox boundary rather
-than silently escaping it). `find`/`ls`/`grep`/`mvn`/`npm`/`docker` stay
-excluded — they're read-only or need registry/daemon access anyway, so the
-chaining risk they carry is small compared to `git` (which can push, and
-reach arbitrary network in one unsandboxed line). Before excluding **any**
-further command, weigh what chaining something dangerous after it would let
-through, not just what that command does on its own.
+So: `preflight.py`'s `check_policy()` now stops any session outright where
+`.claude/settings.json` carries a non-empty `sandbox.excludedCommands`, before
+the first tool call runs. `test_docs.py` asserts the key stays absent from both
+settings files; `test_preflight.py` asserts a configured project is refused.
+There is no supported way to exclude a command from the sandbox in this
+harness — if the sandbox blocks something you need, that is a
+`sandbox.network.allowedDomains` / filesystem-rule gap to close, or a question
+for the human.
 
 Reported upstream as
 [anthropics/claude-code#43454](https://github.com/anthropics/claude-code/issues/43454)
@@ -798,21 +842,27 @@ a kernel-restricted machine) and is fixed; but fixing it did not make preflight
 able to detect *this* failure, and the success message now says so rather than
 implying a certificate it cannot issue.
 
-The practical exposure here is not a silent fail-open — the first Bash call
-fails loudly. It is the pairing: every sandboxed command dies while every
-`sandbox.excludedCommands` entry still runs, unsandboxed. Shrinking that list is
-the mitigation; `guard.py`'s chaining check keeps the entries that must stay
-from carrying anything else out with them.
+While this was open, the practical exposure was not a silent fail-open — the
+first Bash call failed loudly. It was the pairing: every sandboxed command died
+while every `sandbox.excludedCommands` entry still ran, unsandboxed. That
+pairing is what led to refusing the key outright (*Known issue:
+`excludedCommands` matches the whole shell line*, above) rather than continuing
+to mitigate it — `preflight.py` now stops a session before the first Bash call
+if that key is configured at all, so there is no state left in which some
+commands are sandboxed and others silently are not.
 
-Not yet root-caused against a live machine in this environment (would need
+Not root-caused against a live machine in this environment (would need
 `sysctl kernel.unprivileged_userns_clone kernel.apparmor_restrict_unprivileged_userns`
-and `bwrap --version`, which the same broken Bash can't run — check these from
-outside the agent session). Environment: Claude Code, WSL2. Treat as scoped to
-that combo until confirmed elsewhere.
+and `bwrap --version`, which the same broken Bash could not run — check these
+from outside the agent session, if you hit this without the workaround fixing
+it). Environment: Claude Code, WSL2. Treat as scoped to that combo until
+confirmed elsewhere.
 
-Until the `bwrap` failure itself is fixed: expect Bash-dependent verification
-to stay limited. `find`/`ls`/`grep` work directly and `mvn`/`npm`/`docker` cover
-builds and tests, but there is no working `git`, and the guard now refuses to
-let any of those carry a second command past the boundary — so
-`mvn verify | tee log` has to be two calls. That is the intended trade-off: a
-slightly noisier day in exchange for no silent escape.
+**Current status: resolved on this environment**, via `allowAllUnixSockets:
+true` above — `bwrap` builds the namespace and every sandboxed command runs
+(`git` included). If the flag doesn't fix your case on another machine, there
+is no `excludedCommands` fallback to reach for any more — `preflight.py`
+refuses to start a session where that key is configured, full stop. Root-cause
+the `bwrap`/`apply-seccomp` failure (the sysctls above, `bwrap --version`, an
+issue report against #43454) or escalate; a blocked session is the system
+working, not an obstacle to route around (see *G19* in `evals/golden-tasks.md`).

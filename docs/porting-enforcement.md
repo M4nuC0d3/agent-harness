@@ -115,12 +115,16 @@ One caveat the merge does not remove: Codex loads matching hooks from **all**
 sources. A project that both copies `.codex/` in and installs the plugin
 registers each hook twice, and both copies run.
 
-- **`guard.py`'s chaining check no-ops here.** It reads `excludedCommands` from
-  the project's `.claude/settings.json`; a Codex-only project has none, so the
-  prefix list is empty and the check skips (fail-open, as its header documents).
-  Nothing is lost — the hole it closes is specific to Claude Code's
-  `excludedCommands`, which Codex has no equivalent of. The budget, the accident
-  catcher and the trace are unaffected.
+- **The `excludedCommands` block is Claude-Code-only, by the same reasoning as
+  the policy gate below.** `preflight.py`'s `check_policy()` refuses to start
+  any session where `.claude/settings.json` carries a non-empty
+  `sandbox.excludedCommands` — that escape hatch skips the sandbox for a
+  command's *whole* shell line, chaining included, and this harness does not
+  support it at all (README, *Known issue: `excludedCommands` matches the
+  whole shell line*). `check_policy()` only runs when it can identify the tool
+  as Claude Code, so on a Codex-only project it never fires — Codex has no
+  `excludedCommands` equivalent, so there is nothing to refuse. The budget, the
+  accident catcher and the trace are unaffected.
 
 Optional extra: `codex execpolicy` `.rules` (Starlark) give per-command
 allow/prompt/block, the closest match to `settings.json`'s `deny`/`ask` command

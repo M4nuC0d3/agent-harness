@@ -1,9 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "_project_keys": [
-    "PROJECT-SPECIFIC KEYS \u2014 the only two entries below that describe a stack rather than a policy. Everything else is the harness's boundary and should survive adoption unchanged.",
-    "sandbox.excludedCommands: the current values (docker, mvn, npm) are the demo project's. Each entry skips the sandbox for the WHOLE shell line, chained commands included \u2014 so remove what you do not need before adding yours. guard.py's chaining check reads this list.",
+    "PROJECT-SPECIFIC KEYS \u2014 the only entry below that describes a stack rather than a policy. Everything else is the harness's boundary and should survive adoption unchanged.",
     "sandbox.network.allowedDomains: the registries the demo's build needs.",
+    "sandbox.excludedCommands is NOT a project-specific key to fill in \u2014 this harness does not support it at all. preflight.py refuses to start a session where it's configured (README, Known issue: `excludedCommands` matches the whole shell line). If bwrap can't build the sandbox here, that's README's Known issue: bwrap can't create its user namespace \u2014 fix the machine, don't exclude commands from the boundary.",
     "They stay inline because settings.json has no import mechanism \u2014 the same reason the project block in AGENTS.md is inline. docs/adopt.md step 5."
   ],
   "sandbox": {
@@ -11,15 +11,6 @@
     "failIfUnavailable": true,
     "autoAllowBashIfSandboxed": false,
     "allowUnsandboxedCommands": false,
-    "excludedCommands": [
-      "docker *",
-      "mvn *",
-      "npm *",
-      "find *",
-      "ls *",
-      "grep *",
-      "git *"
-    ],
     "enableWeakerNestedSandbox": false,
     "network": {
       "allowedDomains": [
@@ -36,7 +27,7 @@
       "allowUnixSockets": [
         "/var/run/docker.sock"
       ],
-      "allowAllUnixSockets": false,
+      "allowAllUnixSockets": true,
       "allowLocalBinding": false
     },
     "filesystem": {
@@ -117,6 +108,7 @@
       "Edit(./.env)",
       "Edit(./.env.*)",
       "Edit(./secrets/**)",
+      "Edit(./.claude/**)",
       "Bash(curl:*)",
       "Bash(wget:*)",
       "Bash(sudo:*)",
