@@ -112,6 +112,16 @@ POLICY_FIXTURES = {
     "no_sandbox": {"permissions": {"deny": ["Read(./.env)"]}},
     # Boundary on, second layer thin: warn, never block.
     "thin_rules": {"sandbox": {"enabled": True, "allowUnsandboxedCommands": False}},
+    # The escape hatch this harness refuses outright: an excluded command skips
+    # the sandbox for its whole shell line, chaining included.
+    "excluded_commands": {
+        "sandbox": {"enabled": True, "allowUnsandboxedCommands": False,
+                    "excludedCommands": ["mvn *", "npm *"]},
+        "permissions": {"deny": [
+            "Read(./.env)", "Read(./secrets/**)",
+            "Bash(curl:*)", "Bash(wget:*)", "Bash(sudo:*)",
+        ]},
+    },
 }
 
 
@@ -276,6 +286,14 @@ def main() -> int:
               and "WARNING" not in str(complete.get("systemMessage", "")),
               f"got {str(complete)[:140]}")
 
+        excluded = run_policy("excluded_commands")
+        check("sandbox.excludedCommands configured STOPS the session outright",
+              excluded.get("continue") is False,
+              f"got {str(excluded)[:140]}")
+        check("...and the reason names the key, not just 'no sandbox'",
+              "excludedCommands" in str(excluded.get("stopReason", "")),
+              f"got {str(excluded)[:140]}")
+
     print("\nThe seccomp helper — the half of the boundary bwrap doesn't cover:")
     if managed.exists():
         print(f"  [skip] {managed} exists — it would outrank the fixtures")
@@ -296,9 +314,9 @@ def main() -> int:
         check("...but the session still STARTS — this probe never blocks",
               broken.get("continue", True) is True,
               "warn-only is the contract; see PROBE_SECCOMP_HELPER")
-        check("...and the warning names the excludedCommands pairing",
-              "excludedCommands" in str(broken.get("systemMessage", "")),
-              "the exposure is unsandboxed leftovers, not the dead commands")
+        check("...and the warning names the failure mode",
+              "exit 126" in str(broken.get("systemMessage", "")),
+              "every sandboxed Bash call would fail with exit 126")
 
         gone = run_seccomp("missing")
         check("an applyPath pointing nowhere is WARNED about, not blocked",

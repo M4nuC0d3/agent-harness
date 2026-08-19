@@ -26,6 +26,7 @@
       "Edit(./.env)",
       "Edit(./.env.*)",
       "Edit(./secrets/**)",
+      "Edit(./.claude/**)",
       "Bash(curl:*)",
       "Bash(wget:*)",
       "Bash(sudo:*)",

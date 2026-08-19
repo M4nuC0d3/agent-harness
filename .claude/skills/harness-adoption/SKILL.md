@@ -45,9 +45,15 @@ that way.
 
 `.claude/settings.json` and `settings.consumer.example.json` share their
 `sandbox` and `permissions` blocks — `test_docs.py` asserts the two are equal,
-so edit both or neither. Project-specific lines in there: `excludedCommands`
-(`mvn *`, `npm *`, `docker *`) and `network.allowedDomains`. Trim both to your
-stack; every entry is a widening of what escapes the sandbox.
+so edit both or neither. The one project-specific line in there:
+`network.allowedDomains`. Trim it to your stack; every entry is a widening of
+what escapes the sandbox.
+
+Do not add `sandbox.excludedCommands`. It is not a project-specific key to
+fill in — this harness refuses to start any session where it's configured
+(`preflight.py`'s `check_policy()`), because an excluded command skips the
+sandbox for its whole shell line, chaining included. `test_docs.py` asserts
+the key stays absent from both settings files.
 
 For Codex the same boundary lives in `.codex/config.toml` — it does not travel
 with the plugin, so a consuming project copies it.

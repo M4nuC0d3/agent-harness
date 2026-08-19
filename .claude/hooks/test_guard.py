@@ -71,38 +71,15 @@ CASES = [
     # git push is an `ask` permission rule, not a hook decision.
     ("Bash", {"command": "git push origin feature"}, "pass"),
 
-    # --- excluded commands reaching for credentials -------------------------
-    # The hole the settings CANNOT close: these skip the sandbox, so
-    # sandbox.credentials and filesystem.denyRead never apply, and `ls`/`find`
-    # are not file commands Claude Code recognises for Read deny rules either.
-    ("Bash", {"command": "ls ~/.ssh"}, "deny"),
-    ("Bash", {"command": "ls -la ~/.ssh/"}, "deny"),
-    ("Bash", {"command": "find ~/.aws -type f"}, "deny"),
-    ("Bash", {"command": "grep -r . ~/.gnupg"}, "deny"),
-    ("Bash", {"command": "grep -r token ./.env"}, "deny"),
-    ("Bash", {"command": "find . -name '*.pem'"}, "deny"),
-    # A NON-excluded command is the sandbox's job, not the hook's — blocking it
-    # here would duplicate denyRead and give a second place to keep in sync.
-    ("Bash", {"command": "cat ~/.ssh/id_rsa"}, "pass"),
-    # And an excluded command doing ordinary work stays untouched.
-    ("Bash", {"command": "ls src/"}, "pass"),
-    ("Bash", {"command": "grep -r TODO src/"}, "pass"),
-
-    # --- excludedCommands chaining: the sandbox escape (see guard docstring) ---
-    # An excluded command alone is fine — it is excluded on purpose.
-    ("Bash", {"command": "mvn verify"}, "pass"),
-    ("Bash", {"command": "npm ci"}, "pass"),
-    ("Bash", {"command": "grep -rn foo src/"}, "pass"),
-    # ...but chaining carries the rest of the line out of the sandbox with it.
-    ("Bash", {"command": "mvn verify; whoami"}, "deny"),
-    ("Bash", {"command": "mvn -v && cat /etc/hostname"}, "deny"),
-    ("Bash", {"command": "docker ps | grep x"}, "deny"),
-    ("Bash", {"command": "ls -la $(cat /etc/passwd)"}, "deny"),
-    # A NON-excluded command chains freely: both halves stay sandboxed, so
-    # there is nothing for this check to protect.
-    ("Bash", {"command": "echo hi; whoami"}, "pass"),
-    # Word-boundary: `mvnw` is not `mvn`, and is not excluded.
-    ("Bash", {"command": "./mvnw verify; whoami"}, "pass"),
+    # --- sandbox.excludedCommands is not a mechanism guard.py knows about ----
+    # This harness does not support that config key at all any more —
+    # preflight.py refuses to start a session where it's configured
+    # (test_preflight.py). guard.py never reads settings.json, so these are
+    # the sandbox's job either way and correctly pass through here untouched.
+    ("Bash", {"command": "ls ~/.ssh"}, "pass"),
+    ("Bash", {"command": "find ~/.aws -type f"}, "pass"),
+    ("Bash", {"command": "mvn verify; whoami"}, "pass"),
+    ("Bash", {"command": "docker ps | grep x"}, "pass"),
 
     # A deny and an ask on the same line: deny wins, order of checks matters.
     ("Bash", {"command": "chmod 777 /etc && rm -rf /"}, "deny"),
@@ -128,10 +105,11 @@ TOP_LEVEL_CASES = [
     ("rm -rf node_modules", "pass"),  # everyday work: an ask-rule's job, not the hook's
 ]
 
-
-# guard.py reads sandbox.excludedCommands from settings.json, resolved against
-# CLAUDE_PROJECT_DIR. Pin it to the repo root (two levels above this file) so the
-# chaining cases below hold no matter where the suite is invoked from.
+# guard.py no longer reads settings.json at all — sandbox.excludedCommands is
+# not a mechanism it mitigates any more; preflight.py refuses to even start a
+# session where that key is configured (test_preflight.py covers that). Pin
+# CLAUDE_PROJECT_DIR to the repo root anyway so any future hook state that does
+# read it behaves the same no matter where this suite is invoked from.
 PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
 ENV = {**os.environ, "CLAUDE_PROJECT_DIR": str(PROJECT_DIR)}
 
@@ -144,9 +122,9 @@ ENV = {**os.environ, "CLAUDE_PROJECT_DIR": str(PROJECT_DIR)}
 _STATE = tempfile.mkdtemp(prefix="guard-test-state-")
 
 
-def _run_guard(payload: str) -> str:
+def _run_guard(payload: str, env: dict | None = None) -> str:
     p = subprocess.run([sys.executable, str(GUARD)], input=payload,
-                       capture_output=True, text=True, env=ENV, cwd=_STATE)
+                       capture_output=True, text=True, env=env or ENV, cwd=_STATE)
     if p.returncode == 2:
         return "deny"
     if p.returncode == 0 and p.stdout.strip():
@@ -159,8 +137,11 @@ def _run_guard(payload: str) -> str:
     return f"rc={p.returncode}"
 
 
-def decide(tool: str, tool_input: dict, session: str = "t") -> str:
-    return _run_guard(json.dumps({"session_id": session, "tool_name": tool, "tool_input": tool_input}))
+def decide(tool: str, tool_input: dict, session: str = "t", env: dict | None = None) -> str:
+    return _run_guard(
+        json.dumps({"session_id": session, "tool_name": tool, "tool_input": tool_input}),
+        env=env,
+    )
 
 
 def decide_top_level(command: str) -> str:
@@ -208,6 +189,7 @@ def main() -> int:
         label = ti.get("command") or ti.get("file_path", "")
         print(f"  [{'ok ' if ok else 'FAIL'}] {expected:4} {tool:6} {label[:50]}"
               + ("" if ok else f"  -> got {got}"))
+    print()
     for command, expected in TOP_LEVEL_CASES:
         got = decide_top_level(command)
         ok = got == expected

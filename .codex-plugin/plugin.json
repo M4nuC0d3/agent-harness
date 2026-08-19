@@ -1,6 +1,6 @@
 {
   "name": "agent-harness",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "A coordinator plus three roles (researcher, implementer, evaluator) with a session budget, an accident catcher and an audit trace. Stack-agnostic: project facts live in one marked block of AGENTS.md. Enforcement wired for Codex.",
   "author": {
     "name": "M4nuC0d3",

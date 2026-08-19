@@ -10,15 +10,11 @@ Layering (as Anthropic documents it):
   this hook    a session budget, plus an opt-in accident catcher.
 
 SCOPE: registered with matcher "Bash|Task" in .claude/settings.json and
-.codex/hooks.json. Shell calls get the budget, the accident catcher and the
-chaining check; Task calls get the delegation budget and nothing else. The
+.codex/hooks.json. Shell calls get the budget and the accident catcher;
+Task calls get the delegation budget and nothing else. The
 shell budget is therefore a *shell-call* budget and Task never touches it. It
 was previously named and documented as a tool-call budget, which overstated it
 — a Write, a Read or an MCP call never reaches this file and is never counted.
-
-It also closes one hole the sandbox itself leaves open: `excludedCommands` is a
-prefix match on the whole shell line, so anything chained after an excluded
-command escapes with it. See check_excluded_chaining.
 
 What this hook deliberately does NOT do:
 
@@ -116,11 +112,6 @@ STATE_DIR = Path(".agent")
 # 0 disables.
 MAX_DELEGATIONS_PER_ROLE = 12
 
-# Block sandbox-excluded commands that reach for a declared credential path.
-# Set to False to disable; see check_excluded_credentials for why this exists
-# as a hook rather than as a settings rule.
-CHECK_EXCLUDED_CREDENTIALS = True
-
 # Opt-in accident catcher. NOT a security mechanism — see the module docstring.
 # Set to False if you have the sandbox and prefer fewer moving parts.
 ACCIDENT_CATCHER = True
@@ -181,54 +172,6 @@ ASK_PATTERNS = [
     (r"\b(DROP|TRUNCATE)\s+(TABLE|DATABASE)\b", "destroys data irreversibly"),
     (r"\bgit\s+reset\s+--hard\b.*\borigin/", "discards local commits"),
 ]
-
-# Close the excludedCommands chaining hole. `sandbox.excludedCommands` is a
-# prefix match on the WHOLE shell line, not a per-command allowlist: anything
-# chained after a match runs unsandboxed too — no write restriction, no network
-# allowlist, no ~/.ssh deny. Reproduced in the README (*Known issue:
-# excludedCommands matches the whole shell line*).
-#
-# This is the one thing permission rules cannot express and the sandbox itself
-# gets wrong, which is exactly the hook's remit. When a line starts with an
-# excluded prefix AND contains a chain or substitution operator, block it and
-# tell the model to split it. Splitting is the sanctioned remedy, not a
-# workaround: each half is then judged on its own.
-#
-# The prefixes are read from settings.json so there is one source of truth. If
-# that read fails this check is skipped (fail-open) — it is defence in depth
-# against an upstream bug, not the boundary, and a hook that hard-blocks every
-# command because a config file moved is worse than the hole it closes.
-CHECK_EXCLUDED_CHAINING = True
-SETTINGS_PATH = Path(".claude/settings.json")
-# `;` `&&` `||` `|` `$(...)` and backticks all carry the rest of the line past
-# the boundary. Newlines too — a heredoc body or a multi-line command.
-CHAIN_OPERATORS = re.compile(r"[;\n]|&&|\|\||\||\$\(|`")
-
-
-def excluded_prefixes() -> list[str]:
-    """Command prefixes that skip the sandbox, from settings.json.
-
-    Returns [] on any read/parse failure — see CHECK_EXCLUDED_CHAINING.
-    """
-    root = os.environ.get("CLAUDE_PROJECT_DIR") or "."
-    path = Path(root) / SETTINGS_PATH
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(data, dict):
-        return []
-    excluded = (data.get("sandbox") or {}).get("excludedCommands") or []
-    prefixes = []
-    for entry in excluded:
-        if not isinstance(entry, str):
-            continue
-        # "mvn *" -> "mvn", "docker *" -> "docker"
-        head = entry.split("*", 1)[0].strip()
-        if head:
-            prefixes.append(head)
-    return prefixes
-
 
 # ───────────────────────────────────────────────────────────────────────────
 
@@ -459,81 +402,6 @@ def check_delegation_budget(session_id: str, event: dict) -> None:
         )
 
 
-def credential_paths() -> list[str]:
-    """Paths the settings declare off-limits, as bare path fragments.
-
-    Read from sandbox.credentials.files and sandbox.filesystem.denyRead so there
-    is ONE source of truth: a path added to settings is covered here without
-    editing this file. Returns [] on any read failure, same posture as
-    excluded_prefixes().
-    """
-    root = os.environ.get("CLAUDE_PROJECT_DIR") or "."
-    try:
-        data = json.loads((Path(root) / SETTINGS_PATH).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(data, dict):
-        return []
-    sandbox = data.get("sandbox") or {}
-    out = []
-    for entry in (sandbox.get("credentials") or {}).get("files") or []:
-        if isinstance(entry, dict) and entry.get("mode") == "deny":
-            path = entry.get("path")
-            if isinstance(path, str) and path.strip():
-                out.append(path.strip())
-    for path in (sandbox.get("filesystem") or {}).get("denyRead") or []:
-        if isinstance(path, str) and path.strip():
-            out.append(path.strip())
-    # Strip the glob tail so "~/.ssh", "**/*.pem" and "./.env.*" all reduce to a
-    # fragment we can look for in a command line. "**/*.pem" -> ".pem".
-    fragments = []
-    for path in out:
-        frag = path.replace("**/", "").replace("*", "").rstrip("/")
-        frag = frag[1:] if frag.startswith("./") else frag
-        if len(frag) >= 4:  # shorter fragments match far too much
-            fragments.append(frag)
-    return sorted(set(fragments))
-
-
-def check_excluded_credentials(cmd: str) -> None:
-    """Block a sandbox-excluded command that reaches for a credential path.
-
-    This is the one check that still binds when the sandbox is down. Every
-    OTHER credential control in this repo — sandbox.credentials, denyRead, the
-    Read deny rules — is enforced either by the sandbox (which excluded commands
-    never enter) or by Claude Code's own file-command recognition (which `ls`
-    and `find` are not subject to). So `ls ~/.ssh` and `find ~/.ssh -type f`
-    pass every layer: not sandboxed, not a recognised file command, and part of
-    the built-in read-only set that never prompts.
-
-    A PreToolUse hook is the only thing that sees them, because it runs before
-    the permission flow regardless of sandbox state. This is squarely the file's
-    stated purpose: what rules and the sandbox cannot express.
-
-    Not a security boundary — it is substring matching on a command line, and
-    `ls $HOME/.s""sh` defeats it like every other pattern check here. It closes
-    the accident and the obvious reach, not the adversary.
-    """
-    if not CHECK_EXCLUDED_CREDENTIALS or not cmd:
-        return
-    stripped = cmd.lstrip()
-    prefixes = [p for p in excluded_prefixes()
-                if stripped.startswith(p)
-                and (len(stripped) == len(p) or stripped[len(p)].isspace())]
-    if not prefixes:
-        return
-    for frag in credential_paths():
-        if frag in cmd:
-            block(
-                f"'{prefixes[0]}' skips the sandbox (sandbox.excludedCommands), so "
-                f"sandbox.credentials and filesystem.denyRead never see this call — "
-                f"and it names a path they declare off-limits ({frag}). Reading it "
-                "this way is not an oversight in the config; it is the config being "
-                "bypassed. If you need something from there, ask the human."
-            )
-    return
-
-
 def check_accidents(cmd: str) -> None:
     # Runs whenever there is a command to inspect. Tool name is unreliable across
     # tools (some shell hooks send none), but only shell execs carry a
@@ -558,28 +426,6 @@ def check_ask_patterns(cmd: str) -> None:
             ask(f"{why} ({pattern}). Confirm you meant it: {cmd[:130]}")
 
 
-def check_excluded_chaining(cmd: str) -> None:
-    """Block a sandbox-excluded command that carries other commands with it."""
-    if not CHECK_EXCLUDED_CHAINING or not cmd:
-        return
-    stripped = cmd.lstrip()
-    for prefix in excluded_prefixes():
-        if not stripped.startswith(prefix):
-            continue
-        # Match on a word boundary: "mvn" must not match "mvnw" or "mvnd".
-        rest = stripped[len(prefix):]
-        if rest and not rest[0].isspace():
-            continue
-        if CHAIN_OPERATORS.search(cmd):
-            block(
-                f"'{prefix}' skips the sandbox (sandbox.excludedCommands), and "
-                "that exclusion applies to the WHOLE line — anything chained "
-                "after it would also run unsandboxed. Run the commands as "
-                "separate calls instead; splitting is the fix, not a workaround."
-            )
-        return
-
-
 def main() -> None:
     raw = sys.stdin.read()
     try:
@@ -594,9 +440,9 @@ def main() -> None:
     session_id = str(event.get("session_id", ""))
 
     # Task carries no command, so every check below would read it as an empty
-    # shell line: the accident patterns and the chaining check would all pass
-    # vacuously, and it would burn a slot in the *shell*-call budget it does not
-    # belong in. Branch first, and count it against its own budget instead.
+    # shell line: the accident patterns would pass vacuously, and it would burn
+    # a slot in the *shell*-call budget it does not belong in. Branch first, and
+    # count it against its own budget instead.
     if str(event.get("tool_name", "")) == "Task":
         check_delegation_budget(session_id, event)
         allow_silently()
@@ -604,8 +450,6 @@ def main() -> None:
     check_budget(session_id)
     cmd = extract_command(event)
     check_accidents(cmd)
-    check_excluded_chaining(cmd)
-    check_excluded_credentials(cmd)
     check_ask_patterns(cmd)  # last: a deny from either check above wins
     allow_silently()
 

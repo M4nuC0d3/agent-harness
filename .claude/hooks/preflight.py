@@ -21,10 +21,12 @@ reachable from here. Two consequences, both deliberate:
   * The success message says explicitly what it does not prove. A green
     preflight is evidence about bwrap, not a certificate for the boundary.
   * That failure mode is loud on its own — the first Bash call fails visibly.
-    The danger there is not a silent fail-open but the opposite pairing:
-    sandboxed commands all die while `sandbox.excludedCommands` entries still
-    run, with no boundary at all. That is guard.py's chaining check's job, not
-    this file's.
+    The danger it used to open was the opposite pairing: sandboxed commands
+    all die while `sandbox.excludedCommands` entries keep running, with no
+    boundary at all. check_policy() below closes that outright rather than
+    mitigating it — a session with `sandbox.excludedCommands` configured is
+    refused before the first tool call, so the pairing can no longer occur
+    (README, *Known issue: `excludedCommands` matches the whole shell line*).
 
 Part of that gap has since narrowed. Claude Code's Linux boundary is bwrap
 *plus* a vendored `apply-seccomp` helper (shipped since 2.1.92), and the helper
@@ -284,9 +286,7 @@ def probe_seccomp_helper(policy: dict):
             "the helper exists but is not executable: "
             + ", ".join(str(p) for p in not_exec)
             + ". Every sandboxed Bash call will fail with exit 126 "
-            "(`Permission denied`) while `sandbox.excludedCommands` entries "
-            "keep running unsandboxed — the pairing this harness treats as the "
-            "real exposure. Fix with `chmod +x` on that path"
+            "(`Permission denied`). Fix with `chmod +x` on that path"
         )
 
     return True, str(paths[0])
@@ -306,9 +306,12 @@ def enforcement_summary() -> str:
     unreadable settings.json, a counter on a read-only filesystem. Each of those
     is individually defensible — together they make a layer whose absence nobody
     notices. So report the live values rather than the documented ones: the
-    numbers are read out of guard.py itself, and the excluded-prefix count comes
-    from the same function the chaining check uses. `0 excluded prefixes` means
-    that check is inert, which is exactly the thing worth seeing at a glance.
+    numbers are read out of guard.py itself.
+
+    Says nothing about sandbox.excludedCommands: check_policy() above already
+    BLOCKS the session outright if that key is configured, so reaching this
+    line at all means it wasn't — there is no "armed" state left to report for
+    it, unlike the chaining check this summary used to describe here.
     """
     try:
         spec = importlib.util.spec_from_file_location(
@@ -317,20 +320,14 @@ def enforcement_summary() -> str:
         spec.loader.exec_module(guard)
     except Exception as exc:  # noqa: BLE001
         return (f" Guard NOT loadable ({exc.__class__.__name__}): no shell-call "
-                "budget, no accident catcher, no chaining check this session.")
-    try:
-        prefixes = len(guard.excluded_prefixes())
-    except Exception:  # noqa: BLE001
-        prefixes = 0
+                "budget, no accident catcher this session.")
     budget = guard.MAX_SHELL_CALLS_PER_SESSION
     delegations = getattr(guard, "MAX_DELEGATIONS_PER_ROLE", 0)
     return (
         f" Armed: budget {budget or 'off'} shell calls, "
         f"{delegations or 'no'} delegations per role, accident catcher "
-        f"{'on' if guard.ACCIDENT_CATCHER else 'OFF'}, chaining check over "
-        f"{prefixes} excluded prefix(es)"
-        f"{' — inert, settings.json unreadable from here' if not prefixes else ''}"
-        f"; trace -> .agent/trace.jsonl."
+        f"{'on' if guard.ACCIDENT_CATCHER else 'OFF'}; "
+        "trace -> .agent/trace.jsonl."
     )
 
 
@@ -398,6 +395,24 @@ def check_policy() -> None:
             "Bash can write or reach. Copy settings.consumer.example.json to "
             ".claude/settings.json (it carries the boundary — a plugin cannot), "
             "or set sandbox.enabled centrally in managed settings."
+        )
+
+    excluded = sandbox.get("excludedCommands")
+    if isinstance(excluded, list) and excluded:
+        block(
+            "sandbox.excludedCommands is configured ("
+            + ", ".join(str(e) for e in excluded)
+            + "). This harness does not support that escape hatch: an excluded "
+            "command skips the sandbox for its WHOLE shell line, not just "
+            "itself, so anything chained after it — `;`, `&&`, `||`, `|`, "
+            "`$(...)` — runs with no write restriction, no network allowlist "
+            "and no credential deny at all (README, *Known issue: "
+            "`excludedCommands` matches the whole shell line*). If the "
+            "sandbox is refusing something you need, that is either a real "
+            "gap to fix in sandbox.network.allowedDomains / filesystem rules, "
+            "or a question for the human — not something to route around by "
+            "excluding a command. Remove sandbox.excludedCommands from "
+            "settings.json to continue."
         )
 
     notes = []
@@ -549,9 +564,11 @@ def check() -> None:
         allow("Preflight OK: bwrap builds an isolated namespace when invoked "
               "from here (exit 0). This does NOT prove the wrapper the Bash "
               "tool uses works — preflight runs outside it and cannot reach it. "
-              "If Bash calls still die at /proc/self/uid_map, see the README's "
-              "*Known issue: bwrap*. If you do not see this line at session "
-              "start, the hook did not run — check that `python3` is on PATH.")
+              "If Bash calls still die at /proc/self/uid_map, set "
+              "sandbox.network.allowAllUnixSockets: true (already the default "
+              "here; README *Known issue: bwrap* has the details if it isn't "
+              "for you). If you do not see this line at session start, the "
+              "hook did not run — check that `python3` is on PATH.")
 
     # Unknown platform: don't pretend to know. Warn, don't block.
     allow(f"Preflight WARNING: unrecognized platform '{system}'. Confirm your "

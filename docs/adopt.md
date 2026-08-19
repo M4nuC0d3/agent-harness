@@ -104,18 +104,22 @@ even if it feels package-specific.
    working.
 
 5. **Trim the boundary to your stack.** Both files carry a `_project_keys` note
-   naming the only two keys that describe a stack rather than a policy;
+   naming the only key that describes a stack rather than a policy;
    `test_docs.py` checks the note still matches the file. Everything else in
    there is the harness's boundary and should survive adoption unchanged. In `.claude/settings.json` *and*
    `settings.consumer.example.json` — `test_docs.py` asserts their `sandbox` and
    `permissions` blocks are identical, so edit both:
-   - `sandbox.excludedCommands`: currently `docker *`, `mvn *`, `npm *` plus the
-     read-only `find`/`ls`/`grep`. Every entry skips the sandbox **for the whole
-     shell line**, chained commands included (README, *Known issues*). Remove
-     what your stack does not need before adding anything.
    - `sandbox.network.allowedDomains`: your registries, nothing more.
    - Codex reads none of this: mirror it in `.codex/config.toml`, which a
      consuming project copies because it does not travel with the plugin.
+
+   **Do not add `sandbox.excludedCommands`.** This harness does not support
+   it: `preflight.py` refuses to start any session where that key is
+   configured, regardless of what it lists (README, *Known issue:
+   `excludedCommands` matches the whole shell line*). If a build command fails
+   inside the sandbox, that is either a `sandbox.network.allowedDomains` gap to
+   close or a machine problem to fix (README, *Known issue: bwrap can't create
+   its user namespace*) — never a command to exclude from the boundary.
 
 6. **Write your four concrete golden tasks.** G8, G13, G14 and G16 in
    `evals/golden-tasks.md` name a mechanism rather than a command, because the

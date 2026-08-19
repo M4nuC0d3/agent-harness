@@ -98,9 +98,18 @@ def main() -> int:
         "network egress is an allowlist, not open",
         isinstance(sandbox.get("network", {}).get("allowedDomains"), list),
     )
+    # This used to assert allowAllUnixSockets is False (docker.sock only). It
+    # flipped to True as the fix for "every sandboxed Bash call dies at
+    # /proc/self/uid_map" (README, Known issue: bwrap can't create its user
+    # namespace) -- a deliberate widening, not a regression, so assert the
+    # widening is explicit rather than silently re-asserting the old value.
     ok &= check(
-        "docker socket not exposed",
-        sandbox.get("network", {}).get("allowAllUnixSockets") is False,
+        "allowAllUnixSockets is a deliberate widening, not an accident",
+        sandbox.get("network", {}).get("allowAllUnixSockets") is True
+        and "/var/run/docker.sock" in sandbox.get("network", {}).get("allowUnixSockets", []),
+        "true means sandboxed Bash can reach ANY host Unix socket, not just "
+        "docker.sock; allowUnixSockets should still name docker.sock explicitly "
+        "so the narrow list survives if this is ever tightened again",
     )
 
     print("\nWhat the hook gave up, the rules picked up:")

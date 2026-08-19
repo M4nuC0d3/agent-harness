@@ -394,7 +394,7 @@ def main() -> int:
               "example/golden-tasks.md" in read("evals/golden-tasks.md"),
               "an example nobody is sent to is an example nobody reads")
 
-    print("\nThe two project-specific settings keys stay labelled:")
+    print("\nThe one project-specific settings key stays labelled:")
     # settings.json has no import mechanism, so the stack values cannot be split
     # out into a separate file — the same constraint as AGENTS.md. Marking them
     # is the next best thing, and the marking is only worth something if it is
@@ -404,14 +404,23 @@ def main() -> int:
         note = " ".join(data.get("_project_keys", []))
         check(f"{rel} labels its project-specific keys", bool(note),
               "a consumer cannot tell policy from stack without it")
-        check(f"{rel}: the labelled keys exist",
-              "excludedCommands" in data.get("sandbox", {})
-              and "allowedDomains" in data.get("sandbox", {}).get("network", {}),
-              "the label points at keys that are not there")
-    check("docs/adopt.md walks through both labelled keys",
-          "excludedCommands" in read("docs/adopt.md")
-          and "allowedDomains" in read("docs/adopt.md"),
+        check(f"{rel}: the labelled key exists",
+              "allowedDomains" in data.get("sandbox", {}).get("network", {}),
+              "the label points at a key that is not there")
+        # This harness does not support sandbox.excludedCommands at all —
+        # preflight.py refuses to start a session where it's configured (see
+        # check_policy in preflight.py). It must never come back as a
+        # project-specific key to trim, here or in the consumer template.
+        check(f"{rel}: sandbox.excludedCommands is not configured",
+              "excludedCommands" not in data.get("sandbox", {}),
+              "this key is refused at session start — it cannot be present")
+    check("docs/adopt.md walks through the labelled key",
+          "allowedDomains" in read("docs/adopt.md"),
           "the label needs somewhere to send people")
+    check("docs/adopt.md documents excludedCommands as unsupported, not as a "
+          "project-specific key to fill in",
+          "excludedCommands" in read("docs/adopt.md"),
+          "whoever hits the bwrap failure needs to be told not to reach for it")
 
     print("\nManaged lockdown — the template must replace what its flags remove:")
     managed = json.loads(read("managed-settings.example.json"))
