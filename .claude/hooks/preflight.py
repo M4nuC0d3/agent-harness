@@ -26,6 +26,15 @@ reachable from here. Two consequences, both deliberate:
     run, with no boundary at all. That is guard.py's chaining check's job, not
     this file's.
 
+Part of that gap has since narrowed. Claude Code's Linux boundary is bwrap
+*plus* a vendored `apply-seccomp` helper (shipped since 2.1.92), and the helper
+is an ordinary file on disk — reachable from here even though the wrapper that
+invokes it is not. probe_seccomp_helper checks it is present and executable,
+which catches a real reported way for the sandbox to collapse that a green
+bwrap probe cannot. It stops short of running it; see PROBE_SECCOMP_HELPER for
+where the line is drawn and for the plausible-looking probe that must not be
+used.
+
 Wiring (same script, both tools):
   * Claude Code — SessionStart   (.claude/settings.json)
   * Codex       — SessionStart   (.codex/hooks.json)
@@ -82,6 +91,50 @@ PROBE_TIMEOUT_S = 10
 # bwrap rejects this invocation for an unrelated reason and you need a session
 # now. HARNESS_SKIP_PREFLIGHT=1 still disables everything.
 PROBE_SANDBOX = True
+
+# ── The apply-seccomp helper ───────────────────────────────────────────────
+#
+# Claude Code's Linux sandbox does not stop at bwrap. Since 2.1.92 it ships a
+# separate vendored binary, `apply-seccomp`, which installs the seccomp-BPF
+# filter that blocks AF_UNIX sockets. probe_bwrap() cannot see it at all: bwrap
+# can be perfectly healthy while this helper is the thing that fails — which is
+# the exact shape of the failure this repo documents, where every Bash call dies
+# but `bwrap --unshare-all ...` still exits 0 from the host shell.
+#
+# What this probe checks, and what it deliberately does not:
+#
+#   * CHECKED — the binary is findable and executable. It has shipped without
+#     the execute bit before (NixOS #510938: exit 126, "Permission denied"),
+#     which takes the whole sandbox down and is invisible to every other check
+#     in this file.
+#   * NOT CHECKED — whether the helper's namespace setup succeeds. That means
+#     invoking it, and its argument contract is not documented anywhere we can
+#     rely on. A probe built on a guessed invocation would produce confident
+#     false blocks, which is worse than the gap it closes.
+#
+# And one probe that looks obvious and must NOT be used. The upstream report
+# (anthropics/claude-code#43454) illustrates the bug with:
+#
+#     unshare -U sh -c 'echo deny > /proc/self/setgroups'   # Permission denied
+#     unshare -Ur true                                      # works
+#
+# That pair reproduces on healthy machines too — measured on an unaffected
+# kernel 6.18 box with max_user_namespaces=15953 and an initial full uid_map,
+# which gets the identical "Permission denied" / rc=0 split. It demonstrates
+# that the *pattern* is invalid in general; it says nothing about whether THIS
+# machine is affected. Wired in as a gate it would block every session on every
+# machine. It is written down here so nobody re-derives it and ships it.
+#
+# So this probe warns and never blocks. An unverifiable check that stops
+# sessions is how a gate gets switched off, and this file's posture is to
+# refuse only clear-cut absences.
+PROBE_SECCOMP_HELPER = True
+
+# Where the vendored helper lives when settings don't name it explicitly.
+SECCOMP_HELPER_GLOBS = (
+    "~/.local/share/claude/versions/*/vendor/seccomp/*/apply-seccomp",
+    "~/.claude/local/node_modules/@anthropic-ai/claude-code/vendor/seccomp/*/apply-seccomp",
+)
 
 # ── Policy gate ────────────────────────────────────────────────────────────
 #
@@ -166,6 +219,79 @@ def probe_bwrap():
     return False, detail
 
 
+def _seccomp_helper_paths(policy: dict) -> list[Path]:
+    """Every copy of the helper we can find. Explicit config wins outright."""
+    cfg = (policy.get("sandbox") or {}).get("seccomp")
+    if isinstance(cfg, dict):
+        explicit = cfg.get("applyPath")
+        if isinstance(explicit, str) and explicit.strip():
+            return [Path(explicit).expanduser()]
+
+    found: list[Path] = []
+    for pattern in SECCOMP_HELPER_GLOBS:
+        expanded = Path(pattern).expanduser()
+        # Split the fixed prefix from the globbed tail so Path.glob has a root.
+        parts = expanded.parts
+        try:
+            first_glob = next(i for i, p in enumerate(parts) if "*" in p)
+        except StopIteration:
+            if expanded.exists():
+                found.append(expanded)
+            continue
+        root, tail = Path(*parts[:first_glob]), str(Path(*parts[first_glob:]))
+        try:
+            found.extend(sorted(root.glob(tail)))
+        except OSError:
+            continue
+    return found
+
+
+def probe_seccomp_helper(policy: dict):
+    """Is Claude Code's vendored seccomp helper present and runnable?
+
+    -> (state, detail), same three values as probe_bwrap, but state False is
+    reported as a WARNING here rather than a block. See the PROBE_SECCOMP_HELPER
+    comment for why this stops short of invoking the binary.
+
+      True   found, and every copy is executable
+      False  found, and at least one copy is not executable -> warn loudly
+      None   not found, or the probe is disabled -> say so, claim nothing
+    """
+    if not PROBE_SECCOMP_HELPER:
+        return None, "probe disabled (PROBE_SECCOMP_HELPER = False)"
+
+    paths = _seccomp_helper_paths(policy)
+    if not paths:
+        return None, (
+            "could not locate the vendored `apply-seccomp` helper. That is "
+            "normal on a Claude Code older than 2.1.92, on Codex, or on an "
+            "install laid out differently — but it also means this check "
+            "proved nothing about the seccomp layer"
+        )
+
+    missing = [p for p in paths if not p.exists()]
+    if missing:
+        return False, (
+            "`sandbox.seccomp.applyPath` points at "
+            + ", ".join(str(p) for p in missing)
+            + ", which does not exist. Claude Code reports the filter as `not "
+            "installed` in /sandbox -> Dependencies when this happens"
+        )
+
+    not_exec = [p for p in paths if not os.access(p, os.X_OK)]
+    if not_exec:
+        return False, (
+            "the helper exists but is not executable: "
+            + ", ".join(str(p) for p in not_exec)
+            + ". Every sandboxed Bash call will fail with exit 126 "
+            "(`Permission denied`) while `sandbox.excludedCommands` entries "
+            "keep running unsandboxed — the pairing this harness treats as the "
+            "real exposure. Fix with `chmod +x` on that path"
+        )
+
+    return True, str(paths[0])
+
+
 def _read_event() -> dict:
     try:
         return json.load(sys.stdin)
@@ -197,8 +323,10 @@ def enforcement_summary() -> str:
     except Exception:  # noqa: BLE001
         prefixes = 0
     budget = guard.MAX_SHELL_CALLS_PER_SESSION
+    delegations = getattr(guard, "MAX_DELEGATIONS_PER_ROLE", 0)
     return (
-        f" Armed: budget {budget or 'off'} shell calls, accident catcher "
+        f" Armed: budget {budget or 'off'} shell calls, "
+        f"{delegations or 'no'} delegations per role, accident catcher "
         f"{'on' if guard.ACCIDENT_CATCHER else 'OFF'}, chaining check over "
         f"{prefixes} excluded prefix(es)"
         f"{' — inert, settings.json unreadable from here' if not prefixes else ''}"
@@ -291,10 +419,25 @@ def check_policy() -> None:
         allow("Preflight WARNING: " + "; ".join(notes) + ".")
 
 
+# Notes queued by a check that must not stop the session but must not be
+# swallowed either. check() has several allow() exits — the macOS one, the
+# indeterminate-bwrap one, check_policy's warning, the final OK — and a note
+# attached to only one of them would vanish down the others. Queue here, and
+# whichever allow() ends up running prints them.
+PENDING_NOTES: list[str] = []
+
+
+def note(message: str) -> None:
+    """Queue a non-blocking note for whichever allow() ends this hook."""
+    PENDING_NOTES.append(message)
+
+
 def allow(message: str = "") -> None:
     """Let the session start. Optionally surface a non-blocking note."""
-    if message:
-        out = {"continue": True, "systemMessage": message + enforcement_summary()}
+    parts = ([message] if message else []) + PENDING_NOTES
+    if parts:
+        out = {"continue": True,
+               "systemMessage": " ".join(parts) + enforcement_summary()}
         print(json.dumps(out))
     sys.exit(0)
 
@@ -385,6 +528,16 @@ def check() -> None:
             allow(f"Preflight WARNING: could not determine whether bwrap works "
                   f"({detail}). The boundary may be absent — verify with "
                   f"`{' '.join(PROBE_STRONG)}` before trusting this run.")
+        # bwrap is only half of Claude Code's Linux boundary. The vendored
+        # seccomp helper is the half a green bwrap probe says nothing about.
+        seccomp_ok, seccomp_detail = probe_seccomp_helper(effective_policy())
+        if seccomp_ok is False:
+            note("Preflight WARNING: " + seccomp_detail + ".")
+        elif seccomp_ok is None and (os.environ.get("CLAUDECODE")
+                                     or os.environ.get("CLAUDE_PROJECT_DIR")):
+            # Only worth saying under Claude Code — on Codex the helper is not
+            # expected to exist and the note would be pure noise.
+            note("Preflight NOTE: " + seccomp_detail + ".")
         # The machine can build a sandbox. Whether this project asks it to is a
         # separate question, and the one the plugin route gets wrong.
         check_policy()

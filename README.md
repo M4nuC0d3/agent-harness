@@ -310,7 +310,7 @@ settings.consumer.example.json  what a consuming project copies: same boundary,
                           no hooks (the plugin brings them), plus the plugin
                           registration. Kept in sync by test_docs.py.
 .claude/hooks/preflight.py sandbox gate: present AND working, fail-closed (shared)
-.claude/hooks/guard.py    session budget + opt-in accident catcher (shared; config at the top)
+.claude/hooks/guard.py    session + delegation budgets, chaining check, opt-in accident catcher
 .claude/hooks/trace.py    audit trail (shared across tools)
 .claude/hooks/format.py   auto-format on write (PostToolUse; best-effort). Reads
                           .claude/format.map.json from the PROJECT dir, which
@@ -430,7 +430,7 @@ on *shape* (is anything chained?) rather than on intent (is this dangerous?).
 Test all three without a model in the loop:
 
 ```bash
-python3 .claude/hooks/test_guard.py  .claude/hooks/guard.py   # 40 behavioural cases
+python3 .claude/hooks/test_guard.py  .claude/hooks/guard.py   # 59 behavioural cases
 python3 .claude/hooks/test_policy.py .claude/settings.json    # sandbox + rules present
 python3 .claude/hooks/test_docs.py   .                        # instruction-layer consistency
 python3 .claude/hooks/test_preflight.py .claude/hooks/preflight.py  # fake bwrap on PATH
@@ -558,7 +558,7 @@ field for.
 | Heredocs (`<< EOF`) fail | A known sandbox limitation: the shell needs a temp file. Write the file, then run it. |
 | The guard blocks something legitimate | Move it out of `ACCIDENT_PATTERNS` and add a `Bash(...)` **ask** rule in `.claude/settings.json`. Don't disable the sandbox. |
 | Every Bash command fails with `apply-seccomp: write /proc/self/uid_map: Operation not permitted` | `bwrap` itself can't start — see *Known issue: bwrap can't create its user namespace* below. Only commands listed in `sandbox.excludedCommands` in `.claude/settings.json` (currently `docker *`, `mvn *`, `npm *`, `find *`, `ls *`, `grep *`), which skip the sandbox wrapper entirely, still run; everything else — including `echo` and `git` — is blocked at the boundary, not by a permission rule. **Don't "fix" this by adding more entries to `excludedCommands`** — see *Known issue: `excludedCommands` matches the whole shell line* below before touching that list. |
-| Context feels bloated | `AGENTS.md` is 162 lines; with `CLAUDE.md` Claude Code sees 199 — just under Anthropic's ~200 guideline. Re-measure with `cat CLAUDE.md AGENTS.md \| wc -l` after editing either; the number above goes stale silently. Stack detail lives in the nested per-package `AGENTS.md` (loaded only in-tree — and see *Where project information lives* for what Codex does with those), and repeated workflows belong in `.claude/skills/` (see *Recommendations*), not here. `@path` imports do **not** reduce context — they load at launch. |
+| Context feels bloated | `AGENTS.md` is 163 lines; with `CLAUDE.md` Claude Code sees 200 — exactly at Anthropic's ~200 guideline, so the next rule you add has to replace one. Re-measure with `cat CLAUDE.md AGENTS.md \| wc -l` after editing either; the number above goes stale silently. Stack detail lives in the nested per-package `AGENTS.md` (loaded only in-tree — and see *Where project information lives* for what Codex does with those), and repeated workflows belong in `.claude/skills/` (see *Recommendations*), not here. `@path` imports do **not** reduce context — they load at launch. |
 
 ## Known gaps
 
@@ -736,7 +736,9 @@ reach arbitrary network in one unsandboxed line). Before excluding **any**
 further command, weigh what chaining something dangerous after it would let
 through, not just what that command does on its own.
 
-Not yet filed upstream or root-caused beyond the reproduction above.
+Reported upstream as
+[anthropics/claude-code#43454](https://github.com/anthropics/claude-code/issues/43454)
+— open, labelled `regression` / `area:sandbox`, unassigned, no linked PR.
 Environment: Claude Code, WSL2. Treat as scoped to that combo until confirmed
 elsewhere.
 
@@ -766,8 +768,27 @@ That rules out the causes this section originally guessed at. Neither sysctl
 exists, the namespace budget is untouched, and `uid_map` shows the initial user
 namespace with a full identity map — the shell is not nested. bwrap creates a
 fully unshared sandbox on demand. Whatever breaks the Bash tool is therefore
-**not** a kernel or distro restriction; it is something about how the CLI
-invokes bwrap, or what it invokes it inside.
+**not** a kernel or distro restriction.
+
+**It is probably not bwrap either.** The `apply-seccomp` prefix in the error is
+literal: since 2.1.92 Claude Code's Linux sandbox ships a *separate* vendored
+binary of that name, which installs the seccomp-BPF filter, and it does its own
+user-namespace setup before bwrap's boundary is even the question. Upstream
+#43454 reports it writing `/proc/self/setgroups` before mapping the UID, on a
+stock Ubuntu 25.10 with a working kernel, and 2.1.91 — the version before the
+helper shipped — is reported as unaffected. Our failure is the same helper one
+step earlier, at `uid_map` instead of `setgroups`. That fits every measurement
+above: the machine is fine, bwrap is fine, and the thing in between is new.
+
+**A warning about the repro in that issue.** It illustrates the bug with
+`unshare -U sh -c 'echo deny > /proc/self/setgroups'` failing while
+`unshare -Ur true` succeeds — and that split reproduces on *healthy* machines
+too (measured on an unaffected kernel 6.18 box, `max_user_namespaces=15953`,
+full initial `uid_map`: identical `Permission denied` / `rc=0`). It shows the
+pattern is invalid in general; it does **not** tell you whether a given machine
+is affected. Do not wire it into `preflight.py` as a gate — it would stop every
+session everywhere. `probe_seccomp_helper` checks what can honestly be checked
+from a SessionStart hook (the helper is present and executable) and says so.
 
 `preflight.py` cannot see this. It is a SessionStart hook — a direct child of
 the CLI, outside the Bash sandbox path — so its probe measures the same thing

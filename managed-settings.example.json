@@ -1,6 +1,6 @@
 {
-  "_comment": "Org-level lockdown TEMPLATE. Deploy to the managed-settings path for your OS (a system path requiring admin rights) — it is NOT read from a repo. A deny here cannot be overridden by any lower scope. READ _lockdown_note BEFORE deploying: the two allowManaged* flags below switch OFF every project-supplied hook and permission rule, so this file must carry replacements for both or the harness's enforcement disappears.",
-  "_lockdown_note": "allowManagedHooksOnly blocks user hooks, project hooks and plugin hooks — EXCEPT hooks from plugins force-enabled in managed enabledPlugins, matched by the full plugin@marketplace id. That is why enabledPlugins below is not optional: without it, guard.py, preflight.py and trace.py stop running, and preflight (being a hook itself) cannot warn you. allowManagedPermissionRulesOnly likewise makes project permission rules inert, so the deny/ask baseline is repeated here rather than inherited.",
+  "_comment": "Org-level lockdown TEMPLATE. Deploy to the managed-settings path for your OS (a system path requiring admin rights) \u2014 it is NOT read from a repo. A deny here cannot be overridden by any lower scope. READ _lockdown_note BEFORE deploying: the two allowManaged* flags below switch OFF every project-supplied hook and permission rule, so this file must carry replacements for both or the harness's enforcement disappears.",
+  "_lockdown_note": "allowManagedHooksOnly blocks user hooks, project hooks and plugin hooks \u2014 EXCEPT hooks from plugins force-enabled in managed enabledPlugins, matched by the full plugin@marketplace id. That is why enabledPlugins below is not optional: without it, guard.py, preflight.py and trace.py stop running, and preflight (being a hook itself) cannot warn you. allowManagedPermissionRulesOnly likewise makes project permission rules inert, so the deny/ask baseline is repeated here rather than inherited.",
   "allowManagedHooksOnly": true,
   "allowManagedPermissionRulesOnly": true,
   "extraKnownMarketplaces": {
@@ -29,7 +29,14 @@
       "Bash(curl:*)",
       "Bash(wget:*)",
       "Bash(sudo:*)",
-      "Bash(gh pr merge:*)"
+      "Bash(gh pr merge:*)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.netrc)",
+      "Read(~/.docker/**)",
+      "Read(~/.npmrc)"
     ],
     "ask": [
       "Bash(git push:*)",
@@ -43,6 +50,56 @@
   },
   "sandbox": {
     "enabled": true,
-    "allowUnsandboxedCommands": false
+    "allowUnsandboxedCommands": false,
+    "credentials": {
+      "files": [
+        {
+          "path": "~/.ssh",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.aws",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.gnupg",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.config/gh",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.netrc",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.docker",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.npmrc",
+          "mode": "deny"
+        }
+      ],
+      "envVars": [
+        {
+          "name": "GITHUB_TOKEN",
+          "mode": "deny"
+        },
+        {
+          "name": "NPM_TOKEN",
+          "mode": "deny"
+        },
+        {
+          "name": "AWS_SECRET_ACCESS_KEY",
+          "mode": "deny"
+        },
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "mode": "deny"
+        }
+      ]
+    }
   }
 }

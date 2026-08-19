@@ -28,7 +28,8 @@
       "npm *",
       "find *",
       "ls *",
-      "grep *"
+      "grep *",
+      "git *"
     ],
     "enableWeakerNestedSandbox": false,
     "network": {
@@ -56,9 +57,64 @@
         "~/.config/gh",
         "~/.netrc",
         "~/.gnupg",
-        "~/.docker"
+        "~/.docker",
+        "./.env",
+        "./.env.*",
+        "./secrets",
+        "**/*.pem",
+        "**/*.key"
       ],
       "allowWrite": []
+    },
+    "credentials": {
+      "files": [
+        {
+          "path": "~/.ssh",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.aws",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.gnupg",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.config/gh",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.netrc",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.docker",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.npmrc",
+          "mode": "deny"
+        }
+      ],
+      "envVars": [
+        {
+          "name": "GITHUB_TOKEN",
+          "mode": "deny"
+        },
+        {
+          "name": "NPM_TOKEN",
+          "mode": "deny"
+        },
+        {
+          "name": "AWS_SECRET_ACCESS_KEY",
+          "mode": "deny"
+        },
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "mode": "deny"
+        }
+      ]
     }
   },
   "permissions": {
@@ -75,7 +131,14 @@
       "Bash(curl:*)",
       "Bash(wget:*)",
       "Bash(sudo:*)",
-      "Bash(gh pr merge:*)"
+      "Bash(gh pr merge:*)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.netrc)",
+      "Read(~/.docker/**)",
+      "Read(~/.npmrc)"
     ],
     "ask": [
       "Bash(git push:*)",

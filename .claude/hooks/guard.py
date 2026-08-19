@@ -9,11 +9,12 @@ Layering (as Anthropic documents it):
                paths, domains and whole tools.
   this hook    a session budget, plus an opt-in accident catcher.
 
-SCOPE: registered with matcher "Bash" in .claude/settings.json and
-.codex/hooks.json, so it sees shell calls and nothing else. The budget below is
-therefore a *shell-call* budget. It was previously named and documented as a
-tool-call budget, which overstated it — a Write, a Read or an MCP call never
-reaches this file and is never counted.
+SCOPE: registered with matcher "Bash|Task" in .claude/settings.json and
+.codex/hooks.json. Shell calls get the budget, the accident catcher and the
+chaining check; Task calls get the delegation budget and nothing else. The
+shell budget is therefore a *shell-call* budget and Task never touches it. It
+was previously named and documented as a tool-call budget, which overstated it
+— a Write, a Read or an MCP call never reaches this file and is never counted.
 
 It also closes one hole the sandbox itself leaves open: `excludedCommands` is a
 prefix match on the whole shell line, so anything chained after an excluded
@@ -85,6 +86,40 @@ except ImportError:  # pragma: no cover - platform dependent
 # verdict; the number to pick is a little above your normal completed task.
 MAX_SHELL_CALLS_PER_SESSION = 150
 STATE_DIR = Path(".agent")
+
+# ── Delegation budget: the loop bound AGENTS.md only asks for ──────────────
+#
+# AGENTS.md says "after 2 revisions, stop and escalate". That is instruction —
+# it lowers the probability of a runaway implementer↔evaluator ping-pong and
+# guarantees nothing. Nothing in this repo could *count* a revision: guard.py
+# was registered for Bash only, so delegations were invisible to it, and the
+# shell-call budget does not fire when a stuck loop spends its calls on Task
+# rather than on Bash.
+#
+# What this counts and what it deliberately does not:
+#
+#   * COUNTED — Task calls per session, keyed by subagent_type. A delegation is
+#     a tool call, so it is deterministic. A *verdict* is model-generated text
+#     no hook can read reliably, which is why the count is on delegations and
+#     the verdict rule stays in the evaluator's prompt where it belongs.
+#   * NOT COUNTED — revisions per subtask. A hook sees one Task call at a time
+#     with no notion of which subtask it belongs to, and AGENTS.md explicitly
+#     allows fanning the evaluator out into several parallel focus-scoped
+#     instances for one change. A per-subtask counter would therefore block
+#     legitimate fan-out on its first use.
+#
+# So this is a RUNAWAY STOP, not an enforcement of the 2-revision rule. Set it
+# well above a healthy task and read it as "this session stopped converging".
+# Tune from your own traces rather than trusting the default:
+#   jq -s '[.[] | select(.tool=="Task")] | group_by(.session) | map(length) | max' \
+#      .agent/trace.jsonl
+# 0 disables.
+MAX_DELEGATIONS_PER_ROLE = 12
+
+# Block sandbox-excluded commands that reach for a declared credential path.
+# Set to False to disable; see check_excluded_credentials for why this exists
+# as a hook rather than as a settings rule.
+CHECK_EXCLUDED_CREDENTIALS = True
 
 # Opt-in accident catcher. NOT a security mechanism — see the module docstring.
 # Set to False if you have the sandbox and prefer fewer moving parts.
@@ -375,6 +410,130 @@ def check_budget(session_id: str) -> None:
         )
 
 
+def check_delegation_budget(session_id: str, event: dict) -> None:
+    """Stop a session that keeps re-delegating instead of converging.
+
+    Keyed per (session, role), so a stuck implementer↔evaluator ping-pong trips
+    on whichever side spins, and a healthy run that delegates to `researcher`
+    once is unaffected by an implementer that needed several passes.
+
+    Bookkeeping failures never block — same posture as check_budget. A counter
+    on a read-only filesystem is a housekeeping problem; refusing every
+    delegation because of it would be worse than the loop it guards against.
+    """
+    if MAX_DELEGATIONS_PER_ROLE <= 0 or not session_id:
+        return
+    tool_input = event.get("tool_input")
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    role = tool_input.get("subagent_type") or event.get("subagent_type") or ""
+    role = str(role).strip() or "unknown"
+
+    counter = STATE_DIR / "delegations.json"
+    key = f"{session_id}:{role}"
+    n = 0
+    try:
+        with _counter_lock():
+            counts = _read_counts(counter)
+            try:
+                current = int(counts.get(key, 0))
+            except (TypeError, ValueError):
+                current = 0  # corrupt entry -> restart this role's count
+            n = current + 1
+            counts[key] = n
+            if len(counts) > 50:  # keep the file bounded across many sessions
+                counts = dict(list(counts.items())[-50:])
+                counts[key] = n
+            _atomic_write_json(counter, counts)
+    except OSError:
+        return
+
+    if n > MAX_DELEGATIONS_PER_ROLE:
+        block(
+            f"delegation budget exhausted: `{role}` has been dispatched {n} times "
+            f"this session (limit {MAX_DELEGATIONS_PER_ROLE}). That is a loop that "
+            "stopped converging, not progress. Do NOT re-dispatch. Write what is "
+            "verified and what is still open to .agent/PROGRESS.md and escalate to "
+            "the human — AGENTS.md's 'after 2 revisions, stop and escalate' applies "
+            "long before this limit does."
+        )
+
+
+def credential_paths() -> list[str]:
+    """Paths the settings declare off-limits, as bare path fragments.
+
+    Read from sandbox.credentials.files and sandbox.filesystem.denyRead so there
+    is ONE source of truth: a path added to settings is covered here without
+    editing this file. Returns [] on any read failure, same posture as
+    excluded_prefixes().
+    """
+    root = os.environ.get("CLAUDE_PROJECT_DIR") or "."
+    try:
+        data = json.loads((Path(root) / SETTINGS_PATH).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    sandbox = data.get("sandbox") or {}
+    out = []
+    for entry in (sandbox.get("credentials") or {}).get("files") or []:
+        if isinstance(entry, dict) and entry.get("mode") == "deny":
+            path = entry.get("path")
+            if isinstance(path, str) and path.strip():
+                out.append(path.strip())
+    for path in (sandbox.get("filesystem") or {}).get("denyRead") or []:
+        if isinstance(path, str) and path.strip():
+            out.append(path.strip())
+    # Strip the glob tail so "~/.ssh", "**/*.pem" and "./.env.*" all reduce to a
+    # fragment we can look for in a command line. "**/*.pem" -> ".pem".
+    fragments = []
+    for path in out:
+        frag = path.replace("**/", "").replace("*", "").rstrip("/")
+        frag = frag[1:] if frag.startswith("./") else frag
+        if len(frag) >= 4:  # shorter fragments match far too much
+            fragments.append(frag)
+    return sorted(set(fragments))
+
+
+def check_excluded_credentials(cmd: str) -> None:
+    """Block a sandbox-excluded command that reaches for a credential path.
+
+    This is the one check that still binds when the sandbox is down. Every
+    OTHER credential control in this repo — sandbox.credentials, denyRead, the
+    Read deny rules — is enforced either by the sandbox (which excluded commands
+    never enter) or by Claude Code's own file-command recognition (which `ls`
+    and `find` are not subject to). So `ls ~/.ssh` and `find ~/.ssh -type f`
+    pass every layer: not sandboxed, not a recognised file command, and part of
+    the built-in read-only set that never prompts.
+
+    A PreToolUse hook is the only thing that sees them, because it runs before
+    the permission flow regardless of sandbox state. This is squarely the file's
+    stated purpose: what rules and the sandbox cannot express.
+
+    Not a security boundary — it is substring matching on a command line, and
+    `ls $HOME/.s""sh` defeats it like every other pattern check here. It closes
+    the accident and the obvious reach, not the adversary.
+    """
+    if not CHECK_EXCLUDED_CREDENTIALS or not cmd:
+        return
+    stripped = cmd.lstrip()
+    prefixes = [p for p in excluded_prefixes()
+                if stripped.startswith(p)
+                and (len(stripped) == len(p) or stripped[len(p)].isspace())]
+    if not prefixes:
+        return
+    for frag in credential_paths():
+        if frag in cmd:
+            block(
+                f"'{prefixes[0]}' skips the sandbox (sandbox.excludedCommands), so "
+                f"sandbox.credentials and filesystem.denyRead never see this call — "
+                f"and it names a path they declare off-limits ({frag}). Reading it "
+                "this way is not an oversight in the config; it is the config being "
+                "bypassed. If you need something from there, ask the human."
+            )
+    return
+
+
 def check_accidents(cmd: str) -> None:
     # Runs whenever there is a command to inspect. Tool name is unreliable across
     # tools (some shell hooks send none), but only shell execs carry a
@@ -432,10 +591,21 @@ def main() -> None:
         fail("event JSON was not an object")
         return
 
-    check_budget(str(event.get("session_id", "")))
+    session_id = str(event.get("session_id", ""))
+
+    # Task carries no command, so every check below would read it as an empty
+    # shell line: the accident patterns and the chaining check would all pass
+    # vacuously, and it would burn a slot in the *shell*-call budget it does not
+    # belong in. Branch first, and count it against its own budget instead.
+    if str(event.get("tool_name", "")) == "Task":
+        check_delegation_budget(session_id, event)
+        allow_silently()
+
+    check_budget(session_id)
     cmd = extract_command(event)
     check_accidents(cmd)
     check_excluded_chaining(cmd)
+    check_excluded_credentials(cmd)
     check_ask_patterns(cmd)  # last: a deny from either check above wins
     allow_silently()
 

@@ -38,8 +38,20 @@ Return your verdict in exactly this shape:
   convention files you read (step 5), or "none applicable". An empty list on a
   change inside a package that has its own `AGENTS.md` means you skipped the
   check; go back and do it.
+  **If you could not run what you needed**, write `UNVERIFIED: <command> —
+  <what stopped it>` instead of the result, once per command. A sandbox that
+  refuses the call, a missing tool, a build that never starts: all UNVERIFIED.
 - FINDINGS: for each issue — file:line, the problem, and the concrete fix.
   If PASS, note any minor optional improvements.
+
+**UNVERIFIED evidence cannot carry a PASS.** If the checks that would have
+established correctness did not execute, you have not verified the change — you
+have read it. Return FAIL, put the UNVERIFIED lines in EVIDENCE, and say in
+FINDINGS that the blocker is the environment, not the implementation, so the
+coordinator escalates to the human instead of sending the implementer to fix
+code that may be fine. Never let a read-through stand in for an execution: this
+role exists to make claims checkable, and a verdict that quietly drops the
+check is worth less than no verdict, because it is believed.
 
 Be strict but fair. FAIL if the definition of done is not met. When you FAIL,
 the FINDINGS must be precise enough that the implementer can fix them directly.

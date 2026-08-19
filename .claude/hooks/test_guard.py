@@ -11,11 +11,26 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 GUARD = Path(sys.argv[1] if len(sys.argv) > 1 else "guard.py").resolve()
+# The default above is relative to the CURRENT directory, so running this suite
+# from the repo root without an argument points it at a path that does not
+# exist. That failure is loud but deeply misleading: `python3 <missing>.py`
+# exits 2, so every exit-code assertion below fails at once and the suite reads
+# like the hook is broken rather than like the invocation is wrong. Cost a
+# real debugging session once. Fail here instead, before any assertion runs.
+if not GUARD.is_file():
+    sys.exit(
+        f"no hook at {GUARD}\n"
+        f"Pass the path explicitly:\n"
+        f"    python3 {sys.argv[0]} .claude/hooks/guard.py"
+    )
+
 
 # (tool, tool_input, expected) — expected in {"deny", "ask", "pass"}
 #   deny = exit 2, the call never runs
@@ -55,6 +70,23 @@ CASES = [
     ("Bash", {"command": "rm -rf node_modules"}, "pass"),
     # git push is an `ask` permission rule, not a hook decision.
     ("Bash", {"command": "git push origin feature"}, "pass"),
+
+    # --- excluded commands reaching for credentials -------------------------
+    # The hole the settings CANNOT close: these skip the sandbox, so
+    # sandbox.credentials and filesystem.denyRead never apply, and `ls`/`find`
+    # are not file commands Claude Code recognises for Read deny rules either.
+    ("Bash", {"command": "ls ~/.ssh"}, "deny"),
+    ("Bash", {"command": "ls -la ~/.ssh/"}, "deny"),
+    ("Bash", {"command": "find ~/.aws -type f"}, "deny"),
+    ("Bash", {"command": "grep -r . ~/.gnupg"}, "deny"),
+    ("Bash", {"command": "grep -r token ./.env"}, "deny"),
+    ("Bash", {"command": "find . -name '*.pem'"}, "deny"),
+    # A NON-excluded command is the sandbox's job, not the hook's — blocking it
+    # here would duplicate denyRead and give a second place to keep in sync.
+    ("Bash", {"command": "cat ~/.ssh/id_rsa"}, "pass"),
+    # And an excluded command doing ordinary work stays untouched.
+    ("Bash", {"command": "ls src/"}, "pass"),
+    ("Bash", {"command": "grep -r TODO src/"}, "pass"),
 
     # --- excludedCommands chaining: the sandbox escape (see guard docstring) ---
     # An excluded command alone is fine — it is excluded on purpose.
@@ -104,9 +136,17 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
 ENV = {**os.environ, "CLAUDE_PROJECT_DIR": str(PROJECT_DIR)}
 
 
+# The hook keeps its per-session counters in `.agent/` relative to the CURRENT
+# directory. Without a throwaway cwd the suite writes into the repo's own state
+# and every run starts closer to MAX_SHELL_CALLS_PER_SESSION — after enough runs
+# the budget trips and EVERY case denies, which reads as 24 unrelated
+# regressions rather than as exhausted test state. Cost an afternoon once.
+_STATE = tempfile.mkdtemp(prefix="guard-test-state-")
+
+
 def _run_guard(payload: str) -> str:
     p = subprocess.run([sys.executable, str(GUARD)], input=payload,
-                       capture_output=True, text=True, env=ENV)
+                       capture_output=True, text=True, env=ENV, cwd=_STATE)
     if p.returncode == 2:
         return "deny"
     if p.returncode == 0 and p.stdout.strip():
@@ -128,6 +168,36 @@ def decide_top_level(command: str) -> str:
     return _run_guard(json.dumps({"command": command, "cwd": "/repo", "sandbox": False}))
 
 
+def delegation_decisions(role: str, times: int, session: str = "d1",
+                         tmp: str | None = None, prompt: str = "do the thing") -> list[str]:
+    """Dispatch `times` Task calls and return each decision.
+
+    Runs in a throwaway cwd because the counter lives at `.agent/delegations.json`
+    *relative to it* — without that, this suite would write into the repo's own
+    state directory and every rerun would start closer to the limit.
+    """
+    payloads = [json.dumps({
+        "session_id": session, "tool_name": "Task",
+        "tool_input": {"subagent_type": role, "prompt": prompt},
+    })] * times
+    out = []
+    with tempfile.TemporaryDirectory() as fallback:
+        cwd = tmp or fallback
+        for payload in payloads:
+            p = subprocess.run([sys.executable, str(GUARD)], input=payload,
+                               capture_output=True, text=True, env=ENV, cwd=cwd)
+            out.append("deny" if p.returncode == 2 else
+                       "pass" if p.returncode == 0 else f"rc={p.returncode}")
+    return out
+
+
+# Read the limit out of the hook rather than restating it, so raising the
+# constant does not silently leave this suite asserting the old number.
+MAX_DELEGATIONS = int(
+    re.search(r"^MAX_DELEGATIONS_PER_ROLE = (\d+)", GUARD.read_text(encoding="utf-8"),
+              re.M).group(1))
+
+
 def main() -> int:
     failures = []
     for tool, ti, expected in CASES:
@@ -146,7 +216,47 @@ def main() -> int:
         print(f"  [{'ok ' if ok else 'FAIL'}] {expected:4} {'toplvl':6} {command[:50]}"
               + ("" if ok else f"  -> got {got}"))
     print()
-    total = len(CASES) + len(TOP_LEVEL_CASES)
+    print("The delegation budget — the loop bound AGENTS.md only asks for:")
+
+    delegation_cases = []
+
+    def dcheck(label: str, ok: bool, why: str = ""):
+        delegation_cases.append(label)
+        if not ok:
+            failures.append(("delegation", {}, "ok", why))
+        print(f"  [{'ok ' if ok else 'FAIL'}] {label}" + ("" if ok else f" — {why}"))
+
+    at_limit = delegation_decisions("evaluator", MAX_DELEGATIONS)
+    dcheck(f"the first {MAX_DELEGATIONS} dispatches of a role pass",
+           set(at_limit) == {"pass"}, f"got {sorted(set(at_limit))}")
+
+    over = delegation_decisions("evaluator", MAX_DELEGATIONS + 1)
+    dcheck("...and the one past the limit is DENIED",
+           over[-1] == "deny", f"got {over[-1]}")
+    dcheck("...only the last one — the budget is a ceiling, not a mode",
+           set(over[:-1]) == {"pass"}, f"got {sorted(set(over[:-1]))}")
+
+    # Roles are counted apart, or a run that legitimately needed many implementer
+    # passes would spend the evaluator's budget too and trip on its first use.
+    with tempfile.TemporaryDirectory() as shared:
+        delegation_decisions("implementer", MAX_DELEGATIONS, tmp=shared)
+        other = delegation_decisions("evaluator", 1, tmp=shared)
+        dcheck("a different role keeps its own budget in the same session",
+               other == ["pass"], f"got {other}")
+        fresh = delegation_decisions("implementer", 1, session="d2", tmp=shared)
+        dcheck("a different session starts over",
+               fresh == ["pass"], f"got {fresh}")
+
+    # The Task branch must return before the shell checks. A Task prompt is
+    # prose, not a command line: running the accident patterns over it would
+    # deny a delegation for quoting the thing it is asked to look at.
+    quoted = delegation_decisions("researcher", 1, session="d3",
+                                  prompt="find every caller of rm -rf / in docs")
+    dcheck("a Task prompt is not run through the accident catcher",
+           quoted == ["pass"], f"got {quoted}")
+
+    print()
+    total = len(CASES) + len(TOP_LEVEL_CASES) + len(delegation_cases)
     if failures:
         print(f"{len(failures)} FAILURE(S)")
         return 1

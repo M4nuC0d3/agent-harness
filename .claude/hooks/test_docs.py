@@ -23,6 +23,17 @@ from pathlib import Path
 
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
 
+# Same trap as the other suites, one shape further out: this one takes a repo
+# ROOT, so a wrong directory does not crash — it reports every documentation
+# file as missing, which reads like the instruction layer is gone. Anchor on a
+# file that must exist in any checkout and say so once, up front.
+if not (ROOT / "AGENTS.md").is_file():
+    sys.exit(
+        f"no AGENTS.md under {ROOT} — that is not a harness checkout.\n"
+        f"Pass the repo root explicitly:\n"
+        f"    python3 {sys.argv[0]} ."
+    )
+
 # Anthropic's guideline for always-loaded memory. CLAUDE.md imports AGENTS.md,
 # so Claude Code sees both at launch — @path imports do not reduce context.
 LINE_BUDGET = 200
